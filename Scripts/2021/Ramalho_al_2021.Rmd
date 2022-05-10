@@ -1,0 +1,899 @@
+---
+title: "Ramalho et al 2021"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    self_contained: true
+    thumbnails: true
+    lightbox: true
+    gallery: false
+    highlight: tango
+    code_folding: "hide"
+  html_document:
+    code_folding: "hide"
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+Usefull librarys.
+
+```{r, message=FALSE, warning=FALSE}
+
+library(rmarkdown)    # You need this library to run this template.
+library(epuRate)      # Install with devtools: install_github("holtzy/epuRate", force=TRUE)
+library(DT)           # pour faire de joies affichage de dataframe
+library(readtext)
+#library(tcltk)   # choose directory
+library(readxl)
+library(openxlsx)
+library(ggplot2)
+library(tidyverse)
+
+# detach("package:MASS")
+
+library(afex)       # nouveau package, surveiller les MAJ
+library(lme4)
+library(RVAideMemoire)
+library(LMERConvenienceFunctions)
+library(phia)
+library(multcomp)
+library(lmerTest)
+library(emmeans)
+library(ggpubr)
+library(ggeffects)
+library(splines)
+library(DHARMa)
+library(glmmTMB)
+library(sjPlot) 
+library(sjmisc) 
+
+library(rstanarm)
+library(brms)  # for models
+library(bayesplot)
+library(bayestestR)
+
+```
+
+Ramalho B. L., Moly J., Raffin E., Bouet R., Harquel S., Farnè A., Reilly K.T. (2021) Electrocutaneous stimulation to the face inhibits motor evoked potentials in the hand: Face-hand sensorimotor interactions revealed by afferent inhibition. EJN   
+
+https://pubmed.ncbi.nlm.nih.gov/34796553/
+
+
+In this study we used the afferent inhibition protocol to assess sensorimotor interactions between the hand and body parts represented close to the hand area in the sensorimotor cortex: the face and the upper limb. We found that the amplitude of MEPs in the right FDI was reduced when the TMS pulse was preceded by an electrocutaneous stimulus on the face (upper lip or cheek) or on the upper limb (arm or forearm), but this inhibition was more robust when associated with face stimulation. These results provide the first evidence for afferent inhibition between the skin on the face and a hand muscle, but also between the skin on the upper limb and a hand muscle.    
+
+Key words:   
+Time series; GLM; Gamma; Splines; Power; excel sheets;    
+
+# Datas
+
+
+## Extract
+
+Here we define a function to extract datas from exel files:     
+- Read excel file    
+- Explore all sheet (coresponding to subjects)    
+- TP stimuation become O ms timing.   
+Like this I can compare each time point (15,15,35....) with 0 and we keep TP variance.  
+- Each mesure was centered ($Mesure.TP = Mesure / TP$)    
+Exitability difference with Test Pulse baseline.    
+ 
+
+We add one factor : Localization   
+LIP & CHEEK  : loc1   
+FOREAM & ARM : loc2   
+
+
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+
+read.all_subject <- function(prefix){
+  
+  filename <- paste("/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Datas_raw/", prefix, "_all_subjects.xlsx", sep = "")
+ 
+  sheets.names <- excel_sheets(filename)
+  datas.sheets <- lapply(excel_sheets(filename), read_excel, path = filename)
+  
+  datas.raw <- data.frame()
+  # first sheet is MEAN
+  for (xi_suj in 1:length(datas.sheets)){
+      datas.raw <- bind_rows(datas.raw, mutate(datas.sheets[[xi_suj]], Subject = sheets.names[xi_suj]) )
+  }
+  rm(xi_suj)
+  rm(filename, sheets.names, datas.sheets)
+  
+  # Extract subject TP mean 
+  datas.raw %>%
+    dplyr::select(Subject, TP) %>%
+    group_by(Subject) %>%
+    summarise(TP_mean = mean(TP),
+              TP_sd = sd(TP),
+              TP_med = median(TP)) -> datas.TP
+  
+  
+  datas.raw %>%
+    mutate("0" = TP) %>%
+    dplyr::select(-TP) %>%
+    gather(key = "Time", value = "Mesure", -Subject) %>%
+    mutate(Time = as.factor(Time)) %>%
+    drop_na() %>%
+    left_join(datas.TP) %>%
+    group_by(Subject, Time, Mesure) %>%
+    data.frame() %>%
+    mutate(Mesure.TP = Mesure/TP_mean,
+           Mesure.TP.med = Mesure/TP_med) %>%
+    mutate(Body = as.factor(prefix)) %>%
+    mutate(Subject = as.factor(Subject)) -> datas.raw
+  
+  return(datas.raw)
+}
+
+datas.forearm <- read.all_subject("FOREARM")
+datas.arm <- read.all_subject("ARM")
+datas.cheek <- read.all_subject("CHEEK")
+datas.lip <- read.all_subject("LIP")
+
+bind_rows(datas.forearm, datas.arm, datas.cheek, datas.lip) %>%
+  mutate(Subject = as.factor(Subject),
+         Body = as.factor(Body)) %>%
+  dplyr::select(Body, Subject, Time, Mesure, Mesure.TP, Mesure.TP.med) -> datas.raw
+
+# Add localization factor
+datas.raw %>%
+  mutate(Localization = case_when(Body == "LIP" ~ "Loc1",
+                                  Body == "CHEEK" ~ "Loc1",
+                                  Body == "FOREARM" ~ "Loc2",
+                                  Body == "ARM" ~ "Loc2")) %>%
+  mutate(Localization = as.factor(Localization)) -> datas.raw
+
+
+datas.raw %>%
+  datatable(rownames = FALSE, filter="top", options = list(pageLength = 12, scrollX=T) )
+
+rm(datas.arm, datas.cheek, datas.forearm, datas.lip, read.all_subject)
+
+```
+
+## Display
+
+### Distribution
+
+Some displays to explore distributions. Here time is categorical factor.    
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+
+datas.raw %>%
+  mutate(Time = Time) %>%
+  ggplot(aes(x = Time, y = Mesure.TP, color = Time)) +
+    geom_jitter(color = "black", alpha = 0.1) + 
+  	geom_violin(alpha = 0, position = position_dodge(width = 0.9)) + 
+  	geom_boxplot(width=.2, alpha = 0, outlier.alpha = 0, 
+  		      position = position_dodge(width = 0.9)) +
+  	stat_summary(fun.y = "mean", 
+  		       geom = "point", 
+  		       size = 2, 
+  		       position = position_dodge(width=0.9), 
+  	                           color = "black") + 
+    coord_cartesian(ylim =c(-0.1, 5)) +
+    facet_wrap(~Body)
+```
+
+Datas does't looks Gaussian.
+
+Focus on "ARM" :
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+datas.raw %>%
+  mutate(Time = Time) %>%
+  filter(Body == "ARM") %>%
+  ggplot(aes(x = Time, y = Mesure.TP, color = Time)) +
+    geom_violin(alpha = 0, position = position_dodge(width = 0.9)) + 
+  	geom_boxplot(width=.2, alpha = 0, outlier.alpha = 0, 
+  		      position = position_dodge(width = 0.9)) +
+  	stat_summary(fun.y = "mean", 
+  		       geom = "point", 
+  		       size = 2, 
+  		       position = position_dodge(width=0.9), 
+  	                           color = "black") + 
+    coord_cartesian(ylim =c(-0.1, 4)) +
+    facet_wrap(~Subject)
+```
+As we can see.
+It's usefull to add a "0" time as a TP periode. Variance within TP condition help to see a difference between another time.  
+
+### Variability
+
+Explore inter-subject variability
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+
+datas.sum <- Rmisc::summarySE(datas.raw, measurevar="Mesure.TP", groupvars=c("Time","Body"))
+pd <- position_dodge(0.3)
+ggplot(datas.sum, aes(x = Time, y = Mesure.TP, colour = Body, group = Body)) + 
+    geom_errorbar(aes(ymin = Mesure.TP-ci, ymax = Mesure.TP+ci), 
+                  colour = "black", alpha = 0.4, 
+                  width = .1, position = pd) +
+    geom_line(position = pd) +
+    geom_point(position = pd, size = 3) +
+    ggtitle("Subject average")
+
+datas.raw %>%
+    group_by(Subject, Body, Time) %>%
+    summarise(Mesure.TP = mean(Mesure.TP)) %>%
+    mutate(Time = as.numeric(as.character(Time))) %>%
+    ggplot(aes(x = Time, y = Mesure.TP, color = Subject)) +
+	  geom_line(width=.2, show.legend = FALSE) +
+    facet_wrap(~Body, scales = "free") +
+    theme(legend.position="bottom")+
+    ggtitle("Subject datas")
+
+
+```
+
+High Subject's heterogeneity for Mesure.TP along Time.    
+
+
+# Stats
+
+I did 2 analysis:   
+
+  - like the Karen's paper, I use Time as a categorial variable     
+  - To introduce a inter-dependance between time periode, also I use Time as a numerical variable    
+
+We use a glm method because we have to:   
+- Consider the Gamma distribution (Datas are continuous and bounded)
+- We accound of inter-Subject variability and Time by Body variability (random effect).
+
+
+## Time as factor
+
+First, **Time** is consider as factor.   
+So we explore 2 fixe effects and there interation:   
+- Body (4 levels)    
+- Time (9 levels)    
+
+We consider 3 random effets:    
+- Subject intercept    
+- Body intercept
+- Time slope by Body    
+
+
+### Models
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+load(file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Fact.RData")
+# model.03 <- glmer(Mesure.TP ~ (Body + Time)^2 + (1|Subject) + (Time|Body),
+#                   family = Gamma("identity"),
+#                   data = datas.raw)
+
+# model.03 <- glmer(Mesure.TP ~ (Body + Time)^2 + (1|Subject) + (Time|Body) + (1|Localization),
+#                   family = Gamma("identity"),
+#                   data = datas.raw)
+
+#save(model.01, model.02, model.03,
+#      file = "/Volumes/crnldata/dycog/Epilepto/Karen/TMS/Scripts/Models_Time_Fact.RData")
+
+Anova(model.03, type = "II")
+
+```
+
+We have a significative interaction Body:Time.    
+
+
+### Post-hoc
+
+Effect's displays for raw datas and estimate mesures.
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+
+datas.sum <- Rmisc::summarySE(datas.raw, measurevar="Mesure.TP", groupvars=c("Time","Body"))
+pd <- position_dodge(0.3)
+ggplot(datas.sum, aes(x = Time, y = Mesure.TP, colour = Body, group = Body)) + 
+    geom_errorbar(aes(ymin = Mesure.TP-ci, ymax = Mesure.TP+ci), 
+                  colour = "black", alpha = 0.4, 
+                  width = .1, position = pd) +
+    geom_line(position = pd) +
+    geom_point(position = pd, size = 3) +
+    ggtitle("Raw datas")
+
+plot_model(model.03,
+           type = "pred",
+           terms = c("Time", "Body")) +
+    ggtitle("Estimate datas")
+```
+
+Here time-pairwise by Body, Bonferroni correction:
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+em <- emmeans(model.03, ~ Time | Body)
+#CLD(em)
+# contrast(em, interaction = c( "pairwise"), adjust = "bonferroni")
+des_cont <- list("0_15" = c(-1, 1, 0, 0, 0, 0, 0, 0, 0),
+              	 "0_25" = c(-1, 0, 1, 0, 0, 0, 0, 0, 0),
+                 "0_35" = c(-1, 0, 0, 1, 0, 0, 0, 0, 0),
+                 "0_45" = c(-1, 0, 0, 0, 1, 0, 0, 0, 0),
+                 "0_55" = c(-1, 0, 0, 0, 0, 1, 0, 0, 0),
+                 "0_65" = c(-1, 0, 0, 0, 0, 0, 1, 0, 0),
+                 "0_75" = c(-1, 0, 0, 0, 0, 0, 0, 1, 0),
+                 "0_85" = c(-1, 0, 0, 0, 0, 0, 0, 0, 1))
+contrast(em, des_cont, adjust = "bonferroni")
+
+
+```
+
+
+First analysis found significant : <br>
+  - LIP inhibition : 45, 55 and 65 ms <br>
+  - CHEEK inhibition : 25, 55 and 85 ms <br>
+  - FOREARM 65 ms  <br>
+  - ARM 45, 55 and 65 ms <br>
+  
+
+
+## Time as numeric
+
+Is intuitive to consider a **Time** as numeric values, not factor. There is a dependence between levels.  
+Also, **Time** is not a linear effect. So we fit a non-linear **Time** effect with spline with 7 breakpoints.
+
+### Models
+
+We use exactly the same model as previously.   
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+datas.raw %>%
+  mutate(Time = as.numeric(as.character(Time))) -> datas.raw.num
+
+load(file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Nume.RData")
+
+# model.num.04 <- mixed(Mesure.TP ~ (Body + ns(Time,7))^2 + (1|Subject) + (ns(Time,7)|Body),
+#                        family = Gamma("identity"),
+#                        data = datas.raw.num,
+#                        method = "LRT")
+ 
+
+ # save(model.num.04,
+ #      file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Nume.RData")
+ 
+
+Anova(model.num.04$full_model, type = "III")
+
+anova(model.num.04)
+
+```
+
+We always find a significant interaction Body:Time    
+
+
+### Post-hoc
+
+
+Effect's displays for raw datas and estimate mesures.
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+
+datas.sum <- Rmisc::summarySE(datas.raw, measurevar="Mesure.TP", groupvars=c("Time","Body"))
+pd <- position_dodge(0.3)
+ggplot(datas.sum, aes(x = Time, y = Mesure.TP, colour = Body, group = Body)) + 
+    geom_smooth(width=.2, show.legend = TRUE, se = FALSE) +
+    ggtitle("Raw datas")
+
+plot_model(model.num.04$full_model,
+           type = "pred",
+           terms = c("Time", "Body")) +
+    ggtitle("Estimate datas")
+```
+
+There is an effect, ok, but where ? In this case, When ?    
+To explore this issue, we estimate **Mesure.TP** for differents **Time** periode ((0, 15, 25, 35, 45, 55, 65, 75, 85). In this way, as a factor analysis, we compare each 8 time periode to 0 (baseline). Like this, we could express when **Mesure.TP** is significantly different from baseline.   
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+em <- emmeans(model.num.04, ~ Time | Body, 
+                            at = list(Time = c(0, 15, 25, 35, 45, 55, 65, 75, 85)),
+              type = "pred")
+
+
+des_cont <- list("0_15" = c(1, -1, 0, 0, 0, 0, 0, 0, 0),
+              	 "0_25" = c(1, 0, -1, 0, 0, 0, 0, 0, 0),
+                 "0_35" = c(1, 0, 0, -1, 0, 0, 0, 0, 0),
+                 "0_45" = c(1, 0, 0, 0, -1, 0, 0, 0, 0),
+                 "0_55" = c(1, 0, 0, 0, 0, -1, 0, 0, 0),
+                 "0_65" = c(1, 0, 0, 0, 0, 0, -1, 0, 0),
+                 "0_75" = c(1, 0, 0, 0, 0, 0, 0, -1, 0),
+                 "0_85" = c(1, 0, 0, 0, 0, 0, 0, 0, -1))
+contrast(em, des_cont, adjust = "bonferroni")
+
+```
+For instance, here we see a significative decrease for **LIP** at 45, 55 and 65 (p.value was control for multiple comparaison by bonferroni method).    
+
+# Supplementary analysis
+
+Following the advice of the expert reviewers from this first round of reviews we made substantial changes. All these analysis was recommended by reviewers.
+
+
+## Experiment Factor
+
+We keep model with **Time** as numeric.   
+We add factor to code the experiment factor.    
+
+LIP & CHEEK  : Experiment 1    
+FOREAM & ARM : Experiment 2   
+
+Because we are interst by fit the homogeneity within this Experiment factor.    
+We use this factor as **random** intercept.   
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+
+load(file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Nume_Experiment.RData")
+
+# model.num.05 <- mixed(Mesure.TP ~ (Body + ns(Time,7))^2 + 
+#                        (1|Subject) + (ns(Time,7)|Body) + (1|Localization), 
+#                        family = Gamma("identity"),
+#                        data = datas.raw.num, 
+#                        method = "LRT")
+# 
+# save(model.num.05,
+#      file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Nume_Experiment.RData")
+```
+
+First we explore the difference between previous model.   
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+anova(model.num.04, model.num.05)
+```
+
+There is no significative differences between these models. And we see an BIC and AIC increase with the last model. So we conclude to the lack of relevance for this new model.   
+
+Without surpise, we found the same significativity:    
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+
+Anova(model.num.05$full_model, type = "III")
+
+plot(ggpredict(model.num.05$full_model, terms = c("Time", "Body")))
+em <- emmeans(model.num.05$full_model, ~ Time | Body, 
+                            at = list(Time = c(0, 15, 25, 35, 45, 55, 65, 75, 85)))
+
+contrast(em, des_cont, adjust = "bonferroni")
+```
+
+
+## Two separate analysis
+
+Reviewers ask to analyse Experiment 1 and Experiment 2 datas separatly. They are affraid that our GLMM hide an Experiment effect.      
+So, we split (physically) datas according to Experiment 1 and Experiment 2 and we fit 2 models:   
+
+### Experiment 1 (LIP & CHEEK)
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+load(file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Nume_Supp.RData")
+
+# model.num.06 <- mixed(Mesure.TP ~ (Body + ns(Time,7))^2 + 
+#                        (1|Subject) + (ns(Time,7)|Body), 
+#                        family = Gamma("identity"),
+#                        data = filter(datas.raw.num, Localization == "Loc1"), 
+#                        method = "LRT")
+
+Anova(model.num.06$full_model, type = "III")
+
+plot(ggpredict(model.num.06$full_model, terms = c("Time", "Body")))
+
+em <- emmeans(model.num.06$full_model, "Time", 
+                            at = list(Time = c(0, 15, 25, 35, 45, 55, 65, 75, 85)))
+contrast(em, des_cont, adjust = "bonferroni")
+```
+
+The same results as before
+
+### Experiment 2 (FOREAM & ARM)
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+
+
+# model.num.07 <- mixed(Mesure.TP ~ (Body + ns(Time,7))^2 + 
+#                        (1|Subject) + (ns(Time,7)|Body), 
+#                        family = Gamma("identity"),
+#                        data = filter(datas.raw.num, Localization == "Loc2"), 
+#                        method = "LRT")
+
+Anova(model.num.07$full_model, type = "III")
+
+plot(ggpredict(model.num.07$full_model, terms = c("Time", "Body")))
+
+em <- emmeans(model.num.07$full_model, ~ Time, 
+                            at = list(Time = c(0, 15, 25, 35, 45, 55, 65, 75, 85)))
+contrast(em, des_cont, adjust = "bonferroni")
+
+# save(model.num.06, model.num.07,
+#      file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Nume_Supp.RData")
+
+```
+
+The same results as before exept for : <br>
+ARM 0_65 ms <br>
+FOREARM 0_55 <br>
+becomes significant
+
+
+
+## Four separate analysis
+
+The same as previously. Reviwers ask to analyse each body parts independently.    
+So we split datas according to Body levels and we fit 4 models:       
+
+### LIP
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+load(file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Nume_Four_separate.RData")
+
+
+# model.num.08 <- mixed(Mesure.TP ~ ns(Time,7) + (1|Subject), 
+#                       family = Gamma("identity"), 
+#                       data = filter(datas.raw.num, Body == "LIP"),
+#                       method = "LRT")
+
+Anova(model.num.08$full_model, type = "III")
+
+plot(ggpredict(model.num.08$full_model, terms = c("Time")))
+
+em <- emmeans(model.num.08$full_model, ~ Time, 
+                            at = list(Time = c(0, 15, 25, 35, 45, 55, 65, 75, 85)))
+contrast(em, des_cont, adjust = "bonferroni")
+```
+
+The same results as before
+
+### CHEEK
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+# model.num.09 <- mixed(Mesure.TP ~ ns(Time,7) + (1|Subject), 
+#                       family = Gamma("identity"), 
+#                       data = filter(datas.raw.num, Body == "CHEEK"),
+#                       method = "LRT")
+
+Anova(model.num.09$full_model, type = "III")
+
+plot(ggpredict(model.num.09$full_model, terms = c("Time")))
+em <- emmeans(model.num.09$full_model, ~ Time, 
+                            at = list(Time = c(0, 15, 25, 35, 45, 55, 65, 75, 85)))
+contrast(em, des_cont, adjust = "bonferroni")
+```
+
+The same results as before
+
+### FOREARM
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+# model.num.10 <- mixed(Mesure.TP ~ ns(Time,7) + (1|Subject),
+#                       family = Gamma("identity"), 
+#                       data = filter(datas.raw.num, Body == "FOREARM"),
+#                       method = "LRT")
+
+Anova(model.num.10$full_model, type = "III")
+
+plot(ggpredict(model.num.10$full_model, terms = c("Time")))
+em <- emmeans(model.num.10$full_model, ~ Time, 
+                            at = list(Time = c(0, 15, 25, 35, 45, 55, 65, 75, 85)))
+contrast(em, des_cont, adjust = "bonferroni")
+```
+
+The same results as before <br>
+Exept : <br>
+0_55 become significant
+
+### ARM
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+# model.num.11 <- mixed(Mesure.TP ~ ns(Time,7) + (1|Subject), 
+#                       family = Gamma("identity"),
+#                       data = filter(datas.raw.num, Body == "ARM"),
+#                       method = "LRT")
+
+Anova(model.num.11$full_model, type = "III")
+
+plot(ggpredict(model.num.11$full_model, terms = c("Time")))
+em <- emmeans(model.num.11$full_model, ~ Time, 
+                            at = list(Time = c(0, 15, 25, 35, 45, 55, 65, 75, 85)))
+contrast(em, des_cont, adjust = "bonferroni")
+
+# 
+# save(model.num.08, model.num.09, model.num.10, model.num.11,
+#      file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Nume_Four_separate.RData")
+
+```
+
+The same results as before
+
+
+## Power
+
+Reviewers ask effect size or power estimation of our statistics.   
+This is a tricky question.    
+We usetwo indirect ways to answer:     
+
+### Rsquare
+
+Rsquare give an idea of fit quality of our models. So we compare the Rsquare.
+
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+library(MuMIn)
+
+body.name <- c("ARM", "FOREARM", "LIP", "CHEEK")
+glmer.R2 <- c(r.squaredGLMM(glmer(Mesure.TP ~ ns(Time,7) + (1|Subject), data = filter(datas.raw.num, Body == "ARM")))[2],
+r.squaredGLMM(glmer(Mesure.TP ~ ns(Time,7) + (1|Subject), data = filter(datas.raw.num, Body == "FOREARM")))[2],
+r.squaredGLMM(glmer(Mesure.TP ~ ns(Time,7) + (1|Subject), data = filter(datas.raw.num, Body == "LIP")))[2],
+r.squaredGLMM(glmer(Mesure.TP ~ ns(Time,7) + (1|Subject), data = filter(datas.raw.num, Body == "CHEEK")))[2])
+
+aov.R2<-c(summary(lm(Mesure.TP ~ as.factor(Time), data = filter(datas.raw.num, Body == "ARM")))$r.squared,
+summary(lm(Mesure.TP ~ as.factor(Time), data = filter(datas.raw.num, Body == "FOREARM")))$r.squared,
+summary(lm(Mesure.TP ~ as.factor(Time), data = filter(datas.raw.num, Body == "LIP")))$r.squared,
+summary(lm(Mesure.TP ~ as.factor(Time), data = filter(datas.raw.num, Body == "CHEEK")))$r.squared)
+
+data.frame(body = body.name,
+           glmer = glmer.R2,
+           aov = aov.R2) %>%
+  mutate(gain = (glmer-aov)/aov)
+
+
+data.frame(body = c("LIP & CHEEK", "ARM & FOREARM"),
+           glmer = c(r.squaredGLMM(glmer(Mesure.TP ~ (Body + ns(Time,7))^2 + (1|Subject) + (ns(Time,7)|Body),data = filter(datas.raw.num, Localization == "Loc1")))[2],
+                     r.squaredGLMM(glmer(Mesure.TP ~ (Body + ns(Time,7))^2 + (1|Subject) + (ns(Time,7)|Body),data = filter(datas.raw.num, Localization == "Loc2")))[2]),
+           aov = c(summary(lm(Mesure.TP ~ (Body + as.factor(Time))^2 ,data = filter(datas.raw.num, Localization == "Loc1")))$r.squared,
+                   summary(lm(Mesure.TP ~ (Body + as.factor(Time))^2 ,data = filter(datas.raw.num, Localization == "Loc2"))))$r.squared) %>%
+  mutate(gain = (glmer-aov)/aov)
+
+
+
+data.frame(body = c("LIP & CHEEK & ARM & FOREARM"),
+           glmer = r.squaredGLMM(glmer(Mesure.TP ~ (Body + ns(Time,7))^2 + (1|Subject) + (ns(Time,7)|Body) + (1|Localization), data = datas.raw.num))[2],
+           aov = summary(lm(Mesure.TP ~ (Body + as.factor(Time))^2, data = datas.raw.num))$r.squared) %>%
+  mutate(gain = (glmer-aov)/aov)
+
+
+
+
+```
+
+The more we split datas, the less models fit with datas.   
+
+## Bayes framwork
+
+Another way to check the models quality is to use the same models with bayesian estimation of fit. These model give us some metrics to compare the models quality.     
+
+### 1 model, 4 body parts
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+load(file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Nume_stan_4.RData")
+
+# model.stan.00 <- stan_glmer(Mesure.TP ~ (Body + ns(Time,3))^2 + (1|Subject) + (ns(Time,7)|Body) + (1|Localization),                                   family = Gamma("identity"), data = datas.raw.num,
+#                             diagnostic_file = "/Users/romain/Desktop/diagnostic_00.csv")
+# 
+# save(model.stan.00,
+#      file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Nume_stan_4.RData")
+
+
+plot(ggpredict(model.stan.00, terms = c("Time", "Body"))) +
+  ylim(c(0.6, 1.25))
+
+
+emm <- emmeans(model.stan.00, ~ Time | Body, 
+              at = list(Time = c(0, 15, 25, 35, 45, 55, 65, 75, 80)))
+
+
+BF.emm <- bayesfactor_parameters(contrast(emm, des_cont), prior = model.stan.00)
+
+as.data.frame(p_direction(contrast(emm, des_cont))) %>%
+  mutate(BF = exp(BF.emm$log_BF)) %>%
+  mutate(BayesSign = case_when(BF > 100 ~ "***",
+                               BF > 10 & BF < 100 ~ "**",
+                               BF > 3 & BF < 10 ~ "*",
+                               BF > 1 & BF < 3 ~ ".",
+                               BF < 1 ~ "")) -> Tests.Pairs.Results
+
+datatable(Tests.Pairs.Results, filter="top", options = list(pageLength = 12, scrollX=T) )
+
+rm(Tests.Pairs.Results, emm, BF.emm)
+```
+
+### 2 models, 2 body parts each
+
+#### LIP & CHEEK
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+load(file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Nume_stan_2_LIP_CHEEK.RData")
+
+# model.stan.01 <- stan_glmer(Mesure.TP ~ (Body + ns(Time,3))^2 + (1|Subject) + (ns(Time,7)|Body),                                                       family = Gamma("identity"),
+#                             data = filter(datas.raw.num, Localization == "Loc1"),
+#                             diagnostic_file = "/Users/romain/Desktop/diagnostic_00.csv")
+# 
+# save(model.stan.01,
+#      file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Nume_stan_2_LIP_CHEEK.RData")
+
+plot(ggpredict(model.stan.01, terms = c("Time", "Body")))
+
+emm <- emmeans(model.stan.01, ~ Time | Body, 
+              at = list(Time = c(0, 15, 25, 35, 45, 55, 65, 75, 85)))
+
+BF.emm <- bayesfactor_parameters(contrast(emm, des_cont), prior = model.stan.01)
+
+as.data.frame(p_direction(contrast(emm, des_cont))) %>%
+  mutate(BF = exp(BF.emm$log_BF)) %>%
+  mutate(BayesSign = case_when(BF > 100 ~ "***",
+                               BF > 10 & BF < 100 ~ "**",
+                               BF > 3 & BF < 10 ~ "*",
+                               BF > 1 & BF < 3 ~ ".",
+                               BF < 1 ~ "")) -> Tests.Pairs.Results
+
+datatable(Tests.Pairs.Results, filter="top", options = list(pageLength = 12, scrollX=T) )
+
+rm(Tests.Pairs.Results, emm, BF.emm)
+```
+
+
+#### FOREARM & ARM
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+load(file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Nume_stan_2_FOREARM_ARM.RData")
+
+# model.stan.02 <- stan_glmer(Mesure.TP ~ (Body + ns(Time,3))^2 + (1|Subject) + (ns(Time,7)|Body),                                                       family = Gamma("identity"),
+#                             data = filter(datas.raw.num, Localization == "Loc2"),
+#                             diagnostic_file = "/Users/romain/Desktop/diagnostic_00.csv")
+# save(model.stan.02,
+#      file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Nume_stan_2_FOREARM_ARM.RData")
+ 
+plot(ggpredict(model.stan.02, terms = c("Time", "Body")))
+emm <- emmeans(model.stan.02, ~ Time | Body, 
+              at = list(Time = c(0, 15, 25, 35, 45, 55, 65, 75, 85)))
+
+BF.emm <- bayesfactor_parameters(contrast(emm, des_cont), prior = model.stan.02)
+
+as.data.frame(p_direction(contrast(emm, des_cont))) %>%
+  mutate(BF = exp(BF.emm$log_BF)) %>%
+  mutate(BayesSign = case_when(BF > 100 ~ "***",
+                               BF > 10 & BF < 100 ~ "**",
+                               BF > 3 & BF < 10 ~ "*",
+                               BF > 1 & BF < 3 ~ ".",
+                               BF < 1 ~ "")) -> Tests.Pairs.Results
+
+datatable(Tests.Pairs.Results, filter="top", options = list(pageLength = 12, scrollX=T) )
+
+rm(Tests.Pairs.Results, emm, BF.emm)
+```
+### 4 models
+
+#### LIP
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+load(file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Nume_stan_1_LIP.RData")
+
+# model.stan.03 <- stan_glmer(Mesure.TP ~ ns(Time,3) + (1|Subject), family = Gamma("identity"),
+#                             data = filter(datas.raw.num, Body == "LIP"),
+#                             diagnostic_file = "/Users/romain/Desktop/diagnostic_00.csv")
+# 
+# 
+# 
+# save(model.stan.03,
+#      file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Nume_stan_1_LIP.RData")
+
+plot(ggpredict(model.stan.03, terms = c("Time")))
+emm <- emmeans(model.stan.03, ~ Time, 
+              at = list(Time = c(0, 15, 25, 35, 45, 55, 65, 75, 85)))
+
+BF.emm <- bayesfactor_parameters(contrast(emm, des_cont), prior = model.stan.03)
+
+as.data.frame(p_direction(contrast(emm, des_cont))) %>%
+  mutate(BF = exp(BF.emm$log_BF)) %>%
+  mutate(BayesSign = case_when(BF > 100 ~ "***",
+                               BF > 10 & BF < 100 ~ "**",
+                               BF > 3 & BF < 10 ~ "*",
+                               BF > 1 & BF < 3 ~ ".",
+                               BF < 1 ~ "")) -> Tests.Pairs.Results
+
+datatable(Tests.Pairs.Results, filter="top", options = list(pageLength = 12, scrollX=T) )
+
+rm(Tests.Pairs.Results, emm, BF.emm)
+```
+
+#### CHEEK
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+load(file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Nume_stan_1_CHEEK.RData")
+
+# model.stan.04 <- stan_glmer(Mesure.TP ~ ns(Time,3) + (1|Subject), family = Gamma("identity"),
+#                             data = filter(datas.raw.num, Body == "CHEEK"),
+#                             diagnostic_file = "/Users/romain/Desktop/diagnostic_00.csv")
+# 
+# save(model.stan.04,
+#      file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Nume_stan_1_CHEEK.RData")
+
+plot(ggpredict(model.stan.04, terms = c("Time")))
+emm <- emmeans(model.stan.04, ~ Time, 
+              at = list(Time = c(0, 15, 25, 35, 45, 55, 65, 75, 85)))
+
+BF.emm <- bayesfactor_parameters(contrast(emm, des_cont), prior = model.stan.04)
+
+as.data.frame(p_direction(contrast(emm, des_cont))) %>%
+  mutate(BF = exp(BF.emm$log_BF)) %>%
+  mutate(BayesSign = case_when(BF > 100 ~ "***",
+                               BF > 10 & BF < 100 ~ "**",
+                               BF > 3 & BF < 10 ~ "*",
+                               BF > 1 & BF < 3 ~ ".",
+                               BF < 1 ~ "")) -> Tests.Pairs.Results
+
+datatable(Tests.Pairs.Results, filter="top", options = list(pageLength = 12, scrollX=T) )
+
+rm(Tests.Pairs.Results, emm, BF.emm)
+```
+
+#### FOREARM
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+load(file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Nume_stan_1_FOREARM.RData")
+
+# model.stan.05 <- stan_glmer(Mesure.TP ~ ns(Time,3) + (1|Subject), family = Gamma("identity"),
+#                             data = filter(datas.raw.num, Body == "FOREARM"),
+#                             diagnostic_file = "/Users/romain/Desktop/diagnostic_00.csv")
+# save(model.stan.05,
+#      file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Nume_stan_1_FOREARM.RData")
+
+plot(ggpredict(model.stan.05, terms = c("Time")))
+emm <- emmeans(model.stan.05, ~ Time, 
+              at = list(Time = c(0, 15, 25, 35, 45, 55, 65, 75, 85)))
+
+BF.emm <- bayesfactor_parameters(contrast(emm, des_cont), prior = model.stan.05)
+
+as.data.frame(p_direction(contrast(emm, des_cont))) %>%
+  mutate(BF = exp(BF.emm$log_BF)) %>%
+  mutate(BayesSign = case_when(BF > 100 ~ "***",
+                               BF > 10 & BF < 100 ~ "**",
+                               BF > 3 & BF < 10 ~ "*",
+                               BF > 1 & BF < 3 ~ ".",
+                               BF < 1 ~ "")) -> Tests.Pairs.Results
+
+datatable(Tests.Pairs.Results, filter="top", options = list(pageLength = 12, scrollX=T) )
+
+rm(Tests.Pairs.Results, emm, BF.emm)
+```
+
+#### ARM
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+load(file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Nume_stan_1_ARM.RData")
+
+# model.stan.06 <- stan_glmer(Mesure.TP ~ ns(Time,3) + (1|Subject), family = Gamma("identity"),
+#                             data = filter(datas.raw.num, Body == "ARM"),
+#                             diagnostic_file = "/Users/romain/Desktop/diagnostic_00.csv")
+# 
+# save(model.stan.06,
+#      file = "/Users/romain/Study/Reilly_Karen/Face_hand_sensori/Scripts/R/save_models/Models_Time_Nume_stan_1_ARM.RData")
+
+plot(ggpredict(model.stan.06, terms = c("Time")))
+emm <- emmeans(model.stan.06, ~ Time, 
+              at = list(Time = c(0, 15, 25, 35, 45, 55, 65, 75, 85)))
+
+BF.emm <- bayesfactor_parameters(contrast(emm, des_cont), prior = model.stan.06)
+
+as.data.frame(p_direction(contrast(emm, des_cont))) %>%
+  mutate(BF = exp(BF.emm$log_BF)) %>%
+  mutate(BayesSign = case_when(BF > 100 ~ "***",
+                               BF > 10 & BF < 100 ~ "**",
+                               BF > 3 & BF < 10 ~ "*",
+                               BF > 1 & BF < 3 ~ ".",
+                               BF < 1 ~ "")) -> Tests.Pairs.Results
+
+datatable(Tests.Pairs.Results, filter="top", options = list(pageLength = 12, scrollX=T) )
+
+rm(Tests.Pairs.Results, emm, BF.emm)
+```
+
+# Version
+
+Here, all packages en R version used on this analysis.    
+
+
+```{r, warning=FALSE, fig.align='center', message=FALSE}
+print(sessionInfo())
+```

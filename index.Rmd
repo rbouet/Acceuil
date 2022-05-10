@@ -1,18 +1,53 @@
 ---
-title: "DataBase R"
-author: "RB"
+title: "Data Base - CRNL Stat Scripts"
 date: "`r Sys.Date()`"
 output:
-  prettydoc::html_pretty:
-    theme: tactile
-    highlight: github
+  rmdformats::material:
+    highlight: kate
 ---
 
-# Formation
+Welcome to the CRNL's statistic data-base.   
 
-#### GLMM
+# Scripts published
 
-Formation donnée Oussama Abdoun en 2021 dans le cadre du "Club Méthodo" du CRNL.   
+## 2021
+
+> Ramalho B. L., Moly J., Raffin E., Bouet R., Harquel S., Farnè A., Reilly K.T. (2021) Electrocutaneous stimulation to the face inhibits motor evoked potentials in the hand: Face-hand sensorimotor interactions revealed by afferent inhibition. EJN   
+
+key-words:   
+GLMMER, time series, power, bayesian
+
+Markdown script : [here](Scripts/2021/Ramalho_al_2021.html)    
+html script:[here](Scripts/2021/Ramalho_al_2021.Rmd)    
+
+***
+
+> Ramalho B. L., Moly J., Raffin E., Bouet R., Harquel S., Farnè A., Reilly K.T. (2021) Electrocutaneous stimulation to the face inhibits motor evoked potentials in the hand: Face-hand sensorimotor interactions revealed by afferent inhibition. EJN   
+
+key-words:   
+GLMMER, time series, power, bayesian
+
+Markdown script : [here](Scripts/2021/Ramalho_al_2021.html)   
+html script:[here](Scripts/2021/Ramalho_al_2021.Rmd)   
+
+## 2022
+
+> Ramalho B. L., Moly J., Raffin E., Bouet R., Harquel S., Farnè A., Reilly K.T. (2021) Electrocutaneous stimulation to the face inhibits motor evoked potentials in the hand: Face-hand sensorimotor interactions revealed by afferent inhibition. EJN   
+
+key-words:   
+GLMMER, time series, power, bayesian
+
+Markdown script : [here](Scripts/2021/Ramalho_al_2021.html)   
+html script:[here](Scripts/2021/Ramalho_al_2021.Rmd)    
+
+
+
+
+# Formations
+
+## GLMM
+
+Formation donnée par O. Abdoun  et R. Bouet en 2021 dans le cadre du "Club Méthodo" du CRNL.   
 
 On retrouve dans ce support:   
 - Les bases thérorique des statistiques multivariées basées sur la modélisation linéaire mixte généralisée (GLMM).   
@@ -22,10 +57,10 @@ On retrouve dans ce support:
 - L'exploration des tests post-hoc.   
 - Des conseilles de debuggage.   
 
-Le support de la formation se trouve  [ici](https://crnl-lab.github.io/Formation_2020_RBouet_Stat_GLMM/).   
-Pour télécharger le document markdown c'est [ici](https://github.com/crnl-lab/Formation_2020_RBouet_Stat_GLMM).   
+Le support de la formation se trouve  [ici](Formations/GLMM/MixedModel.html).   
+Pour télécharger le document markdown c'est [ici](Formations/GLMM/MixedModel.html).   
 
-#### STAN GLMM
+## STAN GLMM
 
 Ce support est en constuction. Ce sont plutôt des notes mises au propre.   
 
@@ -38,29 +73,13 @@ On retrouve dans ce support:
 - Les tests sur les parmètres du modèle.    
 - L'exploration des tests post-hoc.   
 
-Le support se trouve  [ici](https://crnl-lab.github.io/Formation_2021_RBouet_Stat_STAN_GLMM/).   
-Pour télécharger le document markdown c'est [ici](https://github.com/crnl-lab/Formation_2021_RBouet_Stat_STAN_GLMM).   
+Le support se trouve  [ici](Formations/GLMM_Stan/STAN_GLMM.html).   
+Pour télécharger le document markdown c'est [ici](Formations/GLMM_Stan/STAN_GLMM.Rmd).   
 
 
-#### Configuration RStudio-GITHUB
+## Configuration RStudio-GITHUB
 
 Ce support est un petit tuto pour configurer RStudio afin qu'il communique avec un compte GITHUB.   
 
 Le support se trouce [ici](https://crnl-lab.github.io/Formation_2021_RBouet_Stat_Rstudio_Configuration/).     
-
-
-
-***
-
-# Scripts
-
-#### 2021 K. Reilly Electrocutaneous stimulation
-
-Keyword:   
-GLMM, non-linear, spline    
-
-> Ramalho B. L., Moly J., Raffin E., Bouet R., Harquel S., Farnè A., Reilly K.T. (2021) Electrocutaneous stimulation to the face inhibits motor evoked potentials in the hand:  face-hand sensorimotor interactions revealed by afferent inhibition. EJN
-
-[Read](https://pubmed.ncbi.nlm.nih.gov/34796553/)     
-
 
