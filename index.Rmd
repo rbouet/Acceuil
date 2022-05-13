@@ -17,18 +17,21 @@ Welcome to the CRNL's statistic data-base.
 key-words:   
 GLMMER, time series, power, bayesian
 
-Markdown script : [here](Scripts/2021/Ramalho_al_2021.html)    
-html script:[here](Scripts/2021/Ramalho_al_2021.Rmd)    
+Paper published : [here](https://pubmed.ncbi.nlm.nih.gov/34796553/)   
+html script: [here](Scripts/2021/Ramalho_al_2021.html)    
+Markdown script : [here](Scripts/2021/Ramalho_al_2021.Rmd)    
 
 ***
 
 > Ramalho B. L., Moly J., Raffin E., Bouet R., Harquel S., Farnè A., Reilly K.T. (2021) Electrocutaneous stimulation to the face inhibits motor evoked potentials in the hand: Face-hand sensorimotor interactions revealed by afferent inhibition. EJN   
 
+
 key-words:   
 GLMMER, time series, power, bayesian
 
-Markdown script : [here](Scripts/2021/Ramalho_al_2021.html)   
-html script:[here](Scripts/2021/Ramalho_al_2021.Rmd)   
+Paper published : [here](https://pubmed.ncbi.nlm.nih.gov/34796553/)   
+html script: [here](Scripts/2021/Ramalho_al_2021.html)    
+Markdown script : [here](Scripts/2021/Ramalho_al_2021.Rmd)    
 
 ## 2022
 
@@ -37,8 +40,9 @@ html script:[here](Scripts/2021/Ramalho_al_2021.Rmd)
 key-words:   
 GLMMER, time series, power, bayesian
 
-Markdown script : [here](Scripts/2021/Ramalho_al_2021.html)   
-html script:[here](Scripts/2021/Ramalho_al_2021.Rmd)    
+Paper published : [here](https://pubmed.ncbi.nlm.nih.gov/34796553/)   
+html script: [here](Scripts/2021/Ramalho_al_2021.html)    
+Markdown script : [here](Scripts/2021/Ramalho_al_2021.Rmd)    
 
 
 
@@ -80,6 +84,4 @@ Pour télécharger le document markdown c'est [ici](Formations/GLMM_Stan/STAN_GL
 ## Configuration RStudio-GITHUB
 
 Ce support est un petit tuto pour configurer RStudio afin qu'il communique avec un compte GITHUB.   
-
-Le support se trouce [ici](https://crnl-lab.github.io/Formation_2021_RBouet_Stat_Rstudio_Configuration/).     
 
