@@ -150,8 +150,12 @@ datas.raw %>%
   mutate(Localization = as.factor(Localization)) -> datas.raw
 
 
+
 datas.raw %>%
-  datatable(rownames = FALSE, filter="top", options = list(pageLength = 12, scrollX=T) )
+  dplyr::select(-Subject) %>%
+  gtsummary::tbl_summary(by = "Body") %>%
+  gtsummary::add_p()
+  
 
 rm(datas.arm, datas.cheek, datas.forearm, datas.lip, read.all_subject)
 
