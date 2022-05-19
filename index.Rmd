@@ -85,3 +85,4 @@ Pour télécharger le document markdown c'est [ici](Formations/GLMM_Stan/STAN_GL
 
 Ce support est un petit tuto pour configurer RStudio afin qu'il communique avec un compte GITHUB.   
 
+Le support se trouve  [pas encore ici].   
