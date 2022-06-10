@@ -1,0 +1,720 @@
+---
+title: "Connectivity - EI"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    self_contained: true
+    thumbnails: true
+    lightbox: true
+    gallery: false
+    highlight: tango
+    code_folding: "hide"
+  html_document:
+    code_folding: "hide"
+    latex_engine: xelatex
+---
+
+
+
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+
+library(readxl)
+library(itsadug)
+library(mgcv)
+library(mgcViz)
+library(tidyverse)
+library(visreg)    # GAM model visualisation
+library(permutes)
+
+library(afex)       # nouveau package, surveiller les MAJ
+library(lme4)
+library(RVAideMemoire)
+library(LMERConvenienceFunctions)
+library(phia)
+library(multcomp)
+library(lmerTest)
+library(emmeans)
+library(ggpubr)
+library(ggeffects)
+library(DHARMa)
+library(glmmTMB)
+library(splines)
+
+
+
+```
+
+J. Jung, R. Bouet, H. Catenoix, A. Montavont, J. Isnard, S. Boulogne, M. Guénot, P. Ryvlin, S. Rheims (2022) The neural bases of ictal hypoxemia during Temporal Lobe Seizures. Humain Brain Mapping      
+
+https://pubmed.ncbi.nlm.nih.gov/???????
+
+Focal seizures originating from the temporal lobe are commonly associated with peri-ictal hypoxemia (PIH). During the course of temporal lobe seizures, epileptic discharges often spread within various parts of the temporal lobe but also possibly insula and frontal lobe. The link between spatial propagation of the seizure discharges and PIH is still unclear. 
+Methods : The present study investigates the involvement of several brain structures including medial temporal structures, temporal pole, anterior insula and frontal cortex in the occurrence of PIH. Using quantitative indices obtained during SEEG (stereoencephalography) recordings in 38 patients, we evaluated the epileptogenicity, the spatial propagation and functional connectivity between those structures during seizures leading to PIH.   
+
+Key words:   
+GLM; Gamma distribution; Wilcoxon; LRT; parallel    
+
+
+
+# EI
+
+## Load datas
+
+Here we extract datas from .txt file.   
+
+```{r, message=FALSE, warning=FALSE}
+file_path = "/Users/romain/Study/Rheins/Desaturation_Coherence/Datas_raw/EI/EI_JJ.txt"
+datas <- read.table(file_path,
+                    dec = ".",
+                    header = TRUE)
+
+datas %>%
+  gather(key = "Structure",
+         value = "EI",
+         -Patname, -desat) %>%
+  drop_na() %>%
+  mutate(Structure = case_when(Structure == "hippoc_ant" ~ "Ant Hippo",
+                               Structure == "hippoc_post" ~ "Post Hippo",
+                               Structure == "amygdale" ~ "Amygdala",
+                               Structure == "cing_ant" ~ "ACC",
+                               Structure == "insula_ant" ~ "Ant Insula",
+                               Structure == "insula_post" ~ "Post Insula",
+                               Structure == "CTL" ~ "Lat Temp",
+                               Structure == "frontal_lat" ~ "Lat Front",
+                               Structure == "COF" ~ "OFC",
+                               Structure == "pole_temp" ~ "Pole Temp")) %>%
+  filter(Structure != "Lat Front" & Structure != "Post Insula" & Structure != "Post Hippo") %>% 
+  mutate(Structure = factor(Structure, levels = c("Ant Hippo", "Amygdala", "Pole Temp", "Lat Temp", "Ant Insula", "OFC", "ACC"))) %>%
+  mutate(Structure = as.factor(Structure)) %>%
+  data.frame() -> datas
+
+
+
+datas %>%
+  dplyr::select(-Patname) %>%
+  gtsummary::tbl_summary(by = "Structure") %>%
+  gtsummary::add_p()
+
+```
+
+## Display
+
+To explore behaviour raw datas.   
+
+```{r, message=FALSE, warning=FALSE}
+
+datas %>%
+  ggplot(aes(x = Structure, y = EI, fill = Structure)) +
+    geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+    coord_cartesian(ylim=c(-0.001, 0.03)) +
+  scale_fill_grey() + 
+  theme_classic() +
+  coord_flip() +
+  theme(legend.position = "none",
+        axis.title.x = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(face = "bold", size = 10, angle = 0, hjust = 1),
+        axis.text.y = element_text(face = "bold", size = 12, angle = 0, hjust = 1)) +
+  labs(x = "",
+       y = "Epileptogenicity Index")
+
+```
+
+
+## Stat
+
+EI is value define between 0 and 1, so binomial distribution.   
+Some structures have only O values. So we couldn't use glm models.    
+Here we use Wilcoxon test to compare EI for all combinaison of structure.   
+
+```{r, message=FALSE, warning=FALSE}
+
+test.w.struct <- data.frame(Structure.A = character(),
+                            Structure.B = character(),
+                            p.value   = double())
+
+all.comb.struct <- combn(unique(datas$Structure), 2, simplify = TRUE)
+
+for (xi.struct in c(1:dim(all.comb.struct)[2])){
+
+  test.w.tamp <- wilcox.test(filter(datas, Structure == all.comb.struct[1, xi.struct])$EI,
+                             filter(datas, Structure == all.comb.struct[2, xi.struct])$EI,
+                             alternative = "greater",
+                             paired = FALSE,
+                             exact = TRUE,
+                             correct = FALSE,
+                             conf.int = TRUE)
+
+  test.w.struct %>% 
+    add_row(Structure.A = all.comb.struct[1, xi.struct],
+            Structure.B = all.comb.struct[2, xi.struct],
+            p.value = round(test.w.tamp$p.value, 8)) -> test.w.struct
+}
+
+test.w.struct
+
+```
+
+
+
+# TF
+
+## Load datas
+
+```{r, warning=FALSE, fig.align='center' }
+filename.TF <- "/Users/romain/Study/Rheins/Desaturation_Coherence/Datas_preprocessed/Mesures/extract_tf_sample_TF_sampl_corrige_doubleCrise_TF_sampl.txt"
+
+filename.Desat <- "/Users/romain/Study/Rheins/Desaturation_Coherence/Datas_preprocessed/Mesures/Desat_parametres.txt"
+
+datas.TF    <- read.table(filename.TF, header = TRUE)
+datas.Desat <- read.table(filename.Desat, header = TRUE)
+
+
+datas.TF %>%
+  filter(Win != "BASELINE" & Win != "pre_ONSET" & Win!= "POST_SEIZURE") %>%
+  filter(Structure != "frontallat" & Structure != "insulapost" & Structure != "hippocpost") %>%
+  mutate(Win = factor(Win, levels = c("ONSET", "MID_SEIZURE", "END_SEIZURE"))) %>%
+  drop_na(Mesure) %>%
+  mutate(Desat = Desat,
+         Mesure_pos = 0.001 + Mesure + abs(min(Mesure))) -> datas.TF
+
+
+datas.Desat %>%
+  dplyr::select(-desat) %>%
+  right_join(datas.TF) %>%
+  filter(Win != "BASELINE", Win != "pre_ONSET") %>%
+  mutate(Desat_Win = case_when(is.na(onset_desat) ~"n",
+                               Win == "pre_ONSET" & onset_desat <= 0 ~ "o",
+                               Win == "pre_ONSET" & onset_desat > 0 ~ "n",
+                               Win == "ONSET" & onset_desat.1 == "Y" ~ "o",
+                               Win == "ONSET" & onset_desat.1 == "N" ~ "n",                               
+                               Win == "MID_SEIZURE" & mid_desat == "Y" ~ "o",
+                               Win == "MID_SEIZURE" & mid_desat == "N" ~ "n",
+                               Win == "END_SEIZURE" & end_desat == "Y" ~ "o",
+                               Win == "END_SEIZURE" & end_desat == "N" ~ "n",
+                               Win == "POST_SEIZURE" & post_desat == "Y" ~ "o",
+                               Win == "POST_SEIZURE" & post_desat == "N" ~ "n")) %>%
+  mutate(Desat_Win = as.factor(Desat_Win)) %>%
+  dplyr::select(-fin, -EI,
+               -duree_desat, -nadir_desat, -duree_crise, -mid_sz_onset,
+                -mid_desat, -onset_desat.1, -end_desat, -post_desat,
+               -onset_desat, -Desat, -Mesure) -> datas.TF
+
+
+rm(datas.Desat)
+
+datas.TF %>%
+    dplyr::select(-Subject) %>%
+    gtsummary::tbl_strata(strata = Structure,
+               .tbl_fun = ~ .x %>%
+                         gtsummary::tbl_summary(by = Desat_Win, missing = "no") %>%
+                         gtsummary::add_n(),
+               .header = "**{strata}**"
+              )
+
+```
+
+
+## Display
+
+To explore behaviour raw datas.   
+
+```{r, warning=FALSE, fig.align='center' }
+
+datas.TF %>%
+  ggplot(aes(x = Win, y = Mesure_pos, fill = Desat_Win)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  facet_wrap(~Structure, scales = "free_y") + 
+  scale_fill_grey() + 
+  theme_classic() +
+  coord_cartesian(ylim=c(-0, 30)) +
+  theme(legend.direction = "vertical",
+        legend.box = "horizontal",
+        legend.position = c(0.7,0.01),
+        legend.justification = c(0, 1),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 12, face = "bold"),
+        axis.text.x = element_text(face = "bold", size = 12, angle = 45, hjust = 1),
+        axis.text.y = element_text(face = "bold", size = 10, angle = 0, hjust = 1)) +
+  labs(fill = "Occurrence of PIH",
+       x = "",
+       y = "Ictal Activity [1-50]Hz")
+
+```
+
+## Stat
+
+### Model
+
+Here we use afex package to fit power according to 3 fixed factor and Subject factor as random.   
+Power is gamma distribution with log link.   
+LRT is used compute pValues.    
+
+This is very time consuming so we use a parallel computing.    
+
+```{r, message=FALSE, warning=FALSE}
+load(file = "/Users/romain/Study/Rheins/Desaturation_Coherence/Scripts/models_TF_gamma_V07.Rdata")
+
+# require(parallel)
+# (nc <- detectCores()) # number of cores
+# cl <- makeCluster(rep("localhost", nc)) # make cluster
+# clusterEvalQ(cl, library(optimx)) # need to load optimx in cluster
+
+
+# mixed.TF.04.g <- mixed(Mesure_pos ~ (Structure + Win + Desat_Win)^3 + ( 1| Subject),
+#                        data = datas.TF,
+#                        family = Gamma(link = "log"),
+#                        method = "LRT",
+#                        verbose = FALSE,
+#                        all_fit = FALSE,
+#                        expand_re = TRUE,
+#                        cl = cl)
+
+
+
+# 
+#  save(mixed.TF.04.g,
+#       file = "/Volumes/Backup DD/From_BAIE/Rheins/Desaturation_Coherence/Scripts/models_TF_gamma_V07.Rdata")
+
+```
+
+```{r, warning=FALSE, fig.align='center' }
+anova(mixed.TF.04.g)
+```
+
+We find a 3 way interaction.    
+
+### Post-Hoc
+
+Here we interest only on **Desat_Win:Win:Structure**.     
+
+```{r, warning=FALSE, fig.align='center' }
+PH.emmeans <- emmeans(mixed.TF.04.g, c("Desat_Win", "Win"),
+                      by = c("Structure"))
+
+des_cont <- list("Onset_O_N" =       c(-1, 1, 0, 0, 0, 0),
+                 "MID_SEIZURE_O_N" = c(0, 0, -1, 1, 0, 0),
+                 "END_SEIZURE_O_N" = c(0, 0, 0, 0, -1, 1))
+
+test(contrast(regrid(PH.emmeans), des_cont, adjust = "FDR"), side = ">")
+
+```
+
+To explore behaviour estimate effects.   
+
+```{r, warning=FALSE, fig.align='center' }
+
+emmip(mixed.TF.04.g, 
+      Desat_Win ~ Win|Structure,
+      cov.reduce = FALSE,
+      type = "response")-> p
+
+
+pd <- position_dodge(0.3)
+
+p$data %>%
+  ggplot(aes(x = xvar, y = yvar, color = Desat_Win)) +
+  facet_wrap(~Structure, scales = "free_y") + 
+  geom_errorbar(aes(ymin = yvar-SE, ymax = yvar+SE), 
+                  width = .1, position = pd) +
+  geom_point(position = pd, size = 2) +
+  scale_colour_grey(start = 0.35,
+                    end = 0.65) + 
+  theme_classic() +
+  theme(legend.direction = "vertical",
+        legend.box = "horizontal",
+        legend.position = c(0.7,0.01),
+        legend.justification = c(0, 1),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 12, face = "bold"),
+        axis.text.x = element_text(face = "bold", size = 12, angle = 45, hjust = 1),
+        axis.text.y = element_text(face = "bold", size = 10, angle = 0, hjust = 1)) +
+  labs(fill = "Occurrence of PIH",
+       x = "",
+       y = "Ictal Activity [1-50]Hz") 
+
+```
+
+
+# Connectivity
+
+## Load datas
+
+```{r, warning=FALSE, fig.align='center' }
+filename.Desat <- "/Users/romain/Study/Rheins/Desaturation_Coherence/Datas_preprocessed/Mesures/Desat_parametres.txt"
+datas.Desat <- read.table(filename.Desat, header = TRUE)
+
+filename.Connect <- "/Users/romain/Study/Rheins/Desaturation_Coherence/Datas_preprocessed/Mesures/extract_tf_sample_TF_sampl_corrige_doubleCrise_Connect.txt"
+datas.Connect <- read.table(filename.Connect, header = TRUE)
+
+datas.Connect %>%
+  filter(Win != "BASELINE" & Win != "pre-ONSET" & Win != "ONSET" & Win != "POST_SEIZURE") %>%
+  mutate(Win = factor(Win, levels = c("MID_SEIZURE", "END_SEIZURE"))) %>%
+  unique()  %>%
+  mutate(Structure = case_when(Structure == "COF-amygdale" | 
+                                 Structure == "cingant-amygdale" | 
+                                 Structure == "frontallat-amygdale" ~ "Frontal - Amygdale",
+                               Structure == "COF-hippocant" |  
+                                 Structure == "cingant-hippocant" |
+                                 Structure == "frontallat-hippocant" ~ "Frontal - Hippo",
+                               Structure == "COF-CTL" | 
+                                 Structure == "cingant-CTL" |
+                                 Structure == "frontallat-CTL" ~ "Frontal - Temp_Lat",
+                               Structure == "COF-insulaant" | 
+                                 Structure == "cingant-insulaant" |
+                                 Structure == "frontallat-insulaant" ~ "Frontal - Insula",
+                               Structure == "COF-poletemp" |
+                                 Structure == "cingant-poletemp" |
+                                 Structure == "frontallat-poletemp" ~ "Frontal - Pole",
+                               Structure == "amygdale-CTL" ~ "Amygdale - Temp_Lat",
+                               Structure == "hippocant-CTL" ~ "Hippo - Temp_Lat",
+                               Structure == "insulaant-CTL" ~ "Insula - Temp_Lat",
+                               Structure == "amygdale-insulaant" ~ "Amygdale - Insula",
+                               Structure == "amygdale-hippocant" ~ "Amygdale - Hippo",
+                               Structure == "hippocant-insulaant" ~ "Hippo - Insula",
+                               Structure == "amygdale-poletemp" ~ "Amygdale - Pole",
+                               Structure == "hippocant-poletemp" ~ "Hippo - Pole",
+                               Structure == "CTL-poletemp" ~ "Temp_Lat - Pole",
+                               Structure == "insulaant-poletemp" ~ "Insula - Pole"))  %>%
+  mutate(Structure = as.factor(Structure)) %>%
+  filter(Structure == "Frontal - Amygdale" | 
+         Structure == "Frontal - Hippo" | 
+         Structure == "Frontal - Temp_Lat" | 
+         Structure == "Frontal - Insula" |
+         Structure == "Frontal - Pole" |
+         Structure == "Amygdale - Temp_Lat" | 
+         Structure == "Hippo - Temp_Lat" | 
+         Structure == "Insula - Temp_Lat" | 
+         Structure == "Amygdale - Insula" | 
+         Structure == "Amygdale - Hippo" | 
+         Structure == "Hippo - Insula" |
+         Structure == "Amygdale - Pole" |
+         Structure == "Hippo - Pole" |
+         Structure == "Temp_Lat - Pole" |
+         Structure == "Insula - Pole") %>%
+  na.omit(Mesure) -> datas.Connect.Clust
+
+
+
+datas.Desat %>%
+  dplyr::select(-desat) %>%
+  right_join(datas.Connect.Clust) %>%
+  mutate(Desat_Win = case_when(is.na(onset_desat) ~"n",
+                               Win == "MID_SEIZURE" & mid_desat == "Y" ~ "o",
+                               Win == "MID_SEIZURE" & mid_desat == "N" ~ "n",
+                               Win == "END_SEIZURE" & end_desat == "Y" ~ "o",
+                               Win == "END_SEIZURE" & end_desat == "N" ~ "n")) %>%
+  mutate(Desat_Win = as.factor(Desat_Win)) %>%
+  filter(Bd_Freq == "broadband") %>%
+  dplyr::select(-duree_desat, -nadir_desat, -duree_crise, -mid_sz_onset,
+                -mid_desat, -onset_desat.1, -end_desat, -post_desat,
+                -onset_desat, -Desat, -Bd_Freq)  -> datas.Conn
+
+rm(datas.Connect.Clust, datas.Desat)
+
+datas.Conn %>%
+    dplyr::select(-Subject) %>%
+    gtsummary::tbl_strata(strata = Structure,
+               .tbl_fun = ~ .x %>%
+                         gtsummary::tbl_summary(by = Desat_Win, missing = "no") %>%
+                         gtsummary::add_n(),
+               .header = "**{strata}**"
+              )
+
+```
+
+## Display
+
+To explore behaviour raw datas.   
+
+```{r, warning=FALSE, fig.align='center' }
+datas.Conn %>%
+  ggplot(aes(x = Win, y = Mesure, fill = Desat_Win)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  facet_wrap(~Structure, scales = "free_y") +
+  scale_fill_grey() + 
+  theme_classic() +
+  theme(legend.direction = "vertical",
+        legend.box = "horizontal",
+        legend.position = c(0.77,0.01),
+        legend.justification = c(0, 1),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(face = "bold", size = 10, angle = 45, hjust = 0.5, vjust = 0.65),
+        axis.text.y = element_text(face = "bold", size = 10, angle = 0, hjust = 1)) +
+  labs(fill = "Occurrence of PIH",
+       x = "",
+       y = "Functional Connectivity")
+
+datas.Conn %>%
+  ggplot(aes(x = Win, y = Mesure, fill = Desat_Win)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  scale_fill_grey() + 
+  theme_classic() +
+  coord_cartesian(ylim=c(0, 0.15)) +
+  theme(legend.direction = "vertical",
+        legend.box = "horizontal",
+        legend.position = c(0.3,1),
+        legend.justification = c(0, 1),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(face = "bold", size = 12, angle = 0, hjust = 0.5, vjust = 0.5),
+        axis.text.y = element_text(face = "bold", size = 10, angle = 0, hjust = 1)) +
+  labs(fill = "Occurrence of PIH",
+       x = "",
+       y = "Functional Connectivity") 
+
+datas.Conn %>%
+  ggplot(aes(x = Structure, y = Mesure, fill = Structure)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  scale_fill_grey() + 
+  theme_classic() +
+  coord_cartesian(ylim=c(0, 0.13)) +
+  theme(legend.position = "none",
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(face = "bold", size = 12, angle = 60, hjust = 0.6, vjust = 0.65),
+        axis.text.y = element_text(face = "bold", size = 10, angle = 0, hjust = 1)) +
+  labs(fill = "Occurrence of PIH",
+       x = "",
+       y = "Functional Connectivity") 
+```
+
+## Stat
+
+### Model
+
+Here we use afex package to fit connectivity according to 3 fixed factors and 2 random factors.   
+Power is gamma distribution with log link.   
+LRT is used compute pValues.    
+
+This is very time consuming so we use a parallel computing.    
+
+```{r, warning=FALSE, fig.align='center' }
+
+load(file = "/Users/romain/Study/Rheins/Desaturation_Coherence/Scripts/Model_Conn_V03_Broad.RData")
+
+#
+# require(parallel)
+# (nc <- detectCores()) # number of cores
+# cl <- makeCluster(rep("localhost", nc)) # make cluster
+# clusterEvalQ(cl, library(optimx)) # need to load optimx in cluster
+
+# mixed.Con.03 <- mixed(Mesure+0.0001 ~ (Desat_Win + Structure + Win)^3 + (1|Subject) + (1|Structure), 
+#                       family = Gamma(link = "log"),
+#                       data = datas.Broad,
+#                       method = "LRT",
+#                       verbose = FALSE)
+#plot(simulateResiduals(fittedModel = mixed.Con.03$full_model, n = 1000))
+
+anova(mixed.Con.03)
+```
+
+### Post-Hoc
+
+```{r, warning=FALSE, fig.align='center' }
+PH.emmeans <- emmeans(mixed.Con.03, c("Desat_Win"), by = "Win")
+
+des_cont <- list("O-N" = c(-1, 1))
+test(contrast(regrid(PH.emmeans), des_cont, adjust = "FDR"), side = "both")
+
+emmip(mixed.Con.03, 
+      Desat_Win ~ Win,
+      cov.reduce = FALSE,
+      type = "response") -> p.01
+
+p.01$data %>%
+  ggplot(aes(x = Win, y = yvar, color = Desat_Win)) +
+  geom_errorbar(aes(ymin = yvar-SE, ymax = yvar+SE), 
+                  width = .1, position = pd) +
+  geom_point(position = pd, size = 2) +
+  scale_colour_grey(start = 0.35,
+                    end = 0.65) + 
+  theme_classic() +
+  theme(legend.direction = "vertical",
+        legend.box = "horizontal",
+        legend.position = c(0.45,1),
+        legend.justification = c(0, 1),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 12, face = "bold"),
+        axis.text.x = element_text(face = "bold", size = 12, angle = 45, hjust = 1),
+        axis.text.y = element_text(face = "bold", size = 10, angle = 0, hjust = 1)) +
+  labs(fill = "Occurrence of PIH",
+       x = "",
+       y = "Functional Connectivity") 
+
+
+PH.emmeans <- emmeans(mixed.Con.03, c("Structure"), type = "response")
+
+test(contrast(pairs(PH.emmeans), adjust = "FDR"), side = "both")[,c(1:3, 7)] %>%
+  filter(p.value < 0.05) %>%
+  mutate(ratio = round(ratio, 3),
+         SE       = round(SE, 3),
+         p.value  = round(p.value, 6))
+
+
+emmip(mixed.Con.03, 
+      ~ Structure,
+      cov.reduce = FALSE,
+      type = "response") -> p.00
+
+p.00$data %>%
+  ggplot(aes(x = Structure, y = yvar, color = Structure)) +
+  geom_errorbar(aes(ymin = yvar-SE, ymax = yvar+SE), 
+                  width = .1, position = pd) +
+  geom_point(position = pd, size = 2) +
+  scale_colour_grey(start = 0.35,
+                    end = 0.65) + 
+  theme_classic() +
+  theme(legend.position = "none",
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 12, face = "bold"),
+        axis.text.x = element_text(face = "bold", size = 12, angle = 45, hjust = 1),
+        axis.text.y = element_text(face = "bold", size = 10, angle = 0, hjust = 1)) +
+  labs(fill = "Structure",
+       x = "",
+       y = "Functional Connectivity") 
+```
+
+# Nadir
+
+## Load datas
+
+```{r, warning=FALSE, fig.align='center' }
+filename.TF <- "/Users/romain/Study/Rheins/Desaturation_Coherence/Datas_preprocessed/Mesures/extract_tf_sample_TF_sampl_corrige_doubleCrise_TF_sampl.txt"
+
+filename.Desat <- "/Users/romain/Study/Rheins/Desaturation_Coherence/Datas_preprocessed/Mesures/Desat_parametres.txt"
+
+datas.TF    <- read.table(filename.TF, header = TRUE)
+datas.Desat <- read.table(filename.Desat, header = TRUE)
+
+
+datas.TF %>%
+  filter(Desat == "o") %>%
+  filter(Win != "BASELINE" & Win != "pre_ONSET" & Win!= "POST_SEIZURE") %>%
+  filter(Structure != "frontallat" & Structure != "insulapost" & Structure != "hippocpost") %>%
+  mutate(Win = factor(Win, levels = c("ONSET", "MID_SEIZURE", "END_SEIZURE"))) %>%
+  drop_na(Mesure) %>%
+  mutate(Desat = Desat,
+         Mesure_log = log(0.001 + Mesure + abs(min(Mesure))),
+         Mesure_pos = 0.001 + Mesure + abs(min(Mesure))) -> datas.TF
+
+
+datas.Desat %>%
+  dplyr::select(-desat) %>%
+  right_join(datas.TF) %>%
+  filter(Win != "BASELINE", Win != "pre_ONSET") %>%
+  mutate(Desat_Win = case_when(is.na(onset_desat) ~"n",
+                               Win == "pre_ONSET" & onset_desat <= 0 ~ "o",
+                               Win == "pre_ONSET" & onset_desat > 0 ~ "n",
+                               Win == "ONSET" & onset_desat.1 == "Y" ~ "o",
+                               Win == "ONSET" & onset_desat.1 == "N" ~ "n",                               
+                               Win == "MID_SEIZURE" & mid_desat == "Y" ~ "o",
+                               Win == "MID_SEIZURE" & mid_desat == "N" ~ "n",
+                               Win == "END_SEIZURE" & end_desat == "Y" ~ "o",
+                               Win == "END_SEIZURE" & end_desat == "N" ~ "n",
+                               Win == "POST_SEIZURE" & post_desat == "Y" ~ "o",
+                               Win == "POST_SEIZURE" & post_desat == "N" ~ "n"),
+         nadir_desat = 100-nadir_desat) %>%
+  mutate(Desat_Win = as.factor(Desat_Win)) %>%
+  dplyr::select(-fin, -EI,
+                -duree_crise, -mid_sz_onset,
+                -mid_desat, -onset_desat.1, -end_desat, -post_desat) %>%
+  droplevels()-> datas.TF
+
+
+
+
+datas.TF %>%
+  mutate(Structure = case_when(Structure == "hippocant" ~ "Ant Hippo",
+                               Structure == "amygdale" ~ "Amygdala",
+                               Structure == "cingant" ~ "ACC",
+                               Structure == "insulaant" ~ "Ant Insula",
+                               Structure == "CTL" ~ "Lat Temp",
+                               Structure == "COF" ~ "OFC",
+                               Structure == "poletemp" ~ "Pole Temp"),
+         Win = case_when(Win == "ONSET" ~ "Onset",
+                         Win == "MID_SEIZURE" ~ "Propagation",
+                         Win == "END_SEIZURE" ~ "End")) %>%
+   mutate(Structure = factor(Structure, levels = c("Ant Hippo", "Amygdala", "Pole Temp", "Lat Temp", "Ant Insula", "OFC", "ACC")),
+           Win = factor(Win, levels = c("Onset", "Propagation", "End"))) %>%
+  mutate(Structure = as.factor(Structure)) %>%
+  data.frame() -> datas.TF
+
+
+rm(datas.Desat)
+
+
+datas.TF %>%
+  dplyr::select(-Subject, -onset_desat, -duree_desat, -Desat, -Mesure, -Mesure_log, -Desat_Win) %>%
+  gtsummary::tbl_summary(by = "Structure") %>%
+  gtsummary::add_p()
+
+```
+
+
+## Stat
+
+### Model
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+load(file = "/Users/romain/Study/Rheins/Desaturation_Coherence/Scripts/models_TF_V08.Rdata")
+
+# require(parallel)
+# (nc <- detectCores()) # number of cores
+# cl <- makeCluster(rep("localhost", nc)) # make cluster
+# clusterEvalQ(cl, library(optimx)) # need to load optimx in cluster
+
+
+# mixed.TF.04.g <- mixed(Mesure_pos ~ (Structure + Win + nadir_desat)^3 + ( 1| Subject),
+#                        data = datas.TF,
+#                        family = Gamma(link = "log"),
+#                        method = "LRT",
+#                        verbose = FALSE,
+#                        all_fit = FALSE,
+#                        expand_re = TRUE,
+#                        cl = cl)
+
+
+anova(mixed.TF.04.g)
+```
+
+### Post-Hoc
+
+```{r, warning=FALSE, fig.align='center' }
+load(file = "/Users/romain/Study/Rheins/Desaturation_Coherence/Article/models_nadir.Rdata")
+
+# mixed.TF.09.g <- glmer(Mesure_pos ~ (Structure + Win + ns(nadir_desat,2))^3 +
+#                                      ( 1| Subject),
+#                         data = datas.TF,
+#                         family = Gamma(link = "identity"))
+
+emmip(mixed.TF.09.g, 
+      Win ~ nadir_desat|Structure,
+      cov.reduce = FALSE) +
+      scale_colour_grey() + 
+      theme_classic() +
+  coord_cartesian(ylim =c(0, 150)) -> p
+
+datas.TF %>%
+  mutate(Desat =Desat) %>%
+  ggplot(aes(x = nadir_desat, y = Mesure, color = Win, shape = Win)) +
+    facet_wrap(~Structure) + 
+    geom_line(aes(x = xvar, y = yvar), data = p$data, size = 1.4) +
+    coord_cartesian(ylim =c(0, 170)) +
+    scale_colour_grey() + 
+    theme_classic() +
+    theme(legend.direction = "vertical",
+          legend.box = "horizontal",
+          legend.position = c(0.7,0.25),
+          legend.justification = c(0, 1),
+          axis.title.x = element_text(size = 12, face = "bold", hjust = 0.14),
+          axis.title.y = element_text(size = 12, face = "bold"),
+          axis.text.x = element_text(face = "bold", size = 10),
+          axis.text.y = element_text(face = "bold", size = 10)) +
+  labs(x = "Nadir",
+       y = "Ictal Activity [1-50]Hz",
+       shape = "Seizure Period",
+       color = "Seizure Period")
+
+```

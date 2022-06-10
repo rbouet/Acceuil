@@ -23,26 +23,25 @@ Markdown script : [here](Scripts/2021/Ramalho_al_2021.Rmd)
 
 ***
 
-> Ramalho B. L., Moly J., Raffin E., Bouet R., Harquel S., Farnè A., Reilly K.T. (2021) Electrocutaneous stimulation to the face inhibits motor evoked potentials in the hand: Face-hand sensorimotor interactions revealed by afferent inhibition. EJN   
-
+> Chumit. L., Chumit J. (2021) Electrocutaneous stuff. Pif   
 
 key-words:   
-GLMMER, time series, power, bayesian
+GLMMER, time series, IA, bayesian
 
-Paper published : [here](https://pubmed.ncbi.nlm.nih.gov/34796553/)   
-html script: [here](Scripts/2021/Ramalho_al_2021.html)    
-Markdown script : [here](Scripts/2021/Ramalho_al_2021.Rmd)    
+Paper published : [not yet](https://pubmed.ncbi.nlm.nih.gov/????/)   
+html script: [not yet](Scripts/2021/??????.html)    
+Markdown script : [not yet](Scripts/2021/??????.Rmd)    
 
 ## 2022
 
-> Ramalho B. L., Moly J., Raffin E., Bouet R., Harquel S., Farnè A., Reilly K.T. (2021) Electrocutaneous stimulation to the face inhibits motor evoked potentials in the hand: Face-hand sensorimotor interactions revealed by afferent inhibition. EJN   
+> J. Jung, R. Bouet, H. Catenoix, A. Montavont, J. Isnard, S. Boulogne, M. Guénot, P. Ryvlin, S. Rheims (2022) The neural bases of ictal hypoxemia during Temporal Lobe Seizures. Humain Brain Mapping   
 
 key-words:   
-GLMMER, time series, power, bayesian
+GLM; Gamma distribution; Wilcoxon; LRT; parallel
 
-Paper published : [here](https://pubmed.ncbi.nlm.nih.gov/34796553/)   
-html script: [here](Scripts/2021/Ramalho_al_2021.html)    
-Markdown script : [here](Scripts/2021/Ramalho_al_2021.Rmd)    
+Paper published : [no yet](https://pubmed.ncbi.nlm.nih.gov/?????/)   
+html script: [here](Scripts/2022/Jung_al_2022.html)    
+Markdown script : [here](Scripts/2022/Jung_al_2022.Rmd)    
 
 
 
