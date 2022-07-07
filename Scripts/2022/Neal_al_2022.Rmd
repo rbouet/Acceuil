@@ -1,0 +1,876 @@
+---
+title: "Connectivity test new branche"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    self_contained: true
+    thumbnails: true
+    lightbox: true
+    gallery: false
+    highlight: tango
+    code_folding: "hide"
+  html_document:
+    code_folding: "hide"
+    latex_engine: xelatex
+---
+
+
+
+
+
+```{r, message=FALSE, warning=FALSE }
+library(itsadug)
+library(mgcv)
+library(mgcViz)
+library(tidyverse)
+library(visreg)    # GAM model visualisation
+library(permutes)
+library(patchwork)
+
+library(afex)       # nouveau package, surveiller les MAJ
+library(lme4)
+library(RVAideMemoire)
+library(LMERConvenienceFunctions)
+library(phia)
+library(multcomp)
+library(lmerTest)
+library(emmeans)
+library(ggpubr)
+library(ggeffects)
+library(sjPlot)
+
+library(DHARMa)
+```
+
+
+
+# Datas
+
+## Load datas
+
+Datas extract from : H2_anat_spike_distance.txt
+
+```{r, message=FALSE, warning=FALSE }
+file_path = "/Volumes/Backup DD/From_BAIE/Julien/Connectivity/Scripts/R/Datas/H2_anat_spike_distance.txt"
+datas <- read.table(file_path, header = TRUE)
+```
+
+## Preprocessing
+
+There is `r length(summary(datas$Anatomy))` **Anatomy** levels:    
+ `r unique(datas$Anatomy)`
+
+We reduce the dimension.     
+For instance DC-NC is the same than NC-DC.     
+And we remove the AT levels (to ovoid the redundancy in the datas).    
+
+
+```{r, message=FALSE, warning=FALSE}
+
+datas %>%
+  mutate(Organisation = case_when(Organisation == "0" ~ "0",
+                                  Organisation == "1" ~ "1"),
+         Anatomy = case_when(Anatomy == "NC-NC" ~ "NC-NC",
+                             Anatomy == "DC-DC" ~ "DC-DC",
+                             Anatomy == "DT-DT" ~ "DT-DT",
+                             Anatomy == "OT-OT" ~ "OT-OT",
+                             Anatomy == "DC-NC" ~ "NC-DC",
+                             Anatomy == "NC-DC" ~ "NC-DC",
+                             Anatomy == "DC-DT" ~ "DT-DC",
+                             Anatomy == "DT-DC" ~ "DT-DC",
+                             Anatomy == "DT-NC" ~ "NC-DT",
+                             Anatomy == "NC-DT" ~ "NC-DT",
+                             Anatomy == "OT-DT" ~ "DT-OT",
+                             Anatomy == "DT-OT" ~ "DT-OT",
+                             Anatomy == "OT-NC" ~ "NC-OT",
+                             Anatomy == "NC-OT" ~ "NC-OT",
+                             Anatomy == "OT-DC" ~ "DC-OT",
+                             Anatomy == "DC-OT" ~ "DC-OT"),
+         EZ = case_when(EZ == "0" ~ "0",
+                        EZ == "1" ~ "1",
+                        EZ == "2" ~ "1")) %>%
+  drop_na(EZ) %>%
+  drop_na(Anatomy) %>%
+  mutate(Anatomy = as.factor(Anatomy),
+         Organisation = as.factor(Organisation),
+         EZ = as.factor(EZ),
+         Spasm = as.factor(Spasm), 
+         Pat_name = as.factor(Pat_name),
+         Channels = as.factor(Channels)) -> datas
+
+
+summary(datas)
+
+```
+
+
+Now there is `r length(summary(datas$Anatomy))` **Anatomy** levels:    
+ `r unique(datas$Anatomy)`
+
+
+## How many datas ?
+
+Here we visualize the data from the contingency table or two-way frequency table.   
+In this plot, the size represent the proportional value.    
+For instance, in the first plot.For DC-OT anatomic level, there is a huge unbalance number of EZ values. With a very few EZ egual 1.    
+This means that we can’t analyse the interaction between Anatomic and EZ factors.   
+Because there is a very low statistic power (not enough datas within each anatomic levels).   
+
+Is not the same for Spasm VS anatomic and Organisation VS Anatomy.    
+
+```{r, message=FALSE, warning=FALSE }
+mosaicplot(xtabs(H2~Anatomy+EZ, datas), 
+           color = TRUE,
+           border = "chocolate",
+           main = "EZ")
+
+mosaicplot(xtabs(H2~Anatomy+Spasm, datas), 
+           color = TRUE,
+           border = "chocolate",
+           main = "Spasm")
+
+mosaicplot(xtabs(H2~Anatomy+Organisation, datas), 
+           color = TRUE,
+           border = "chocolate",
+           main = "Organisation")
+```
+
+
+
+## Distribution
+
+
+Then, we explore the nature of your variable of interest: the H2.   
+This is the plot of the H2 distribution.    
+One color by anatomic level.    
+Clearly, it’s not a normal distribution. For several reasons :    
+-	Datas were borned, there is not 0 value    
+-	And the shape is not a gaussian with a pic not centered    
+
+This means that we can’t use a parametric statistic like anova.   
+Typically many people use a log transform. So datas look like a normal distribution.   
+But not, with log transform you can get a normal shape distribution but this is artificial, you can’t create the lost information of the left of the distribution. Distribution was cut before 0 and it’s lost for ever.
+   
+Later, in our model, we will use a Gamma log description of the error distribution.     
+
+```{r, message=FALSE, warning=FALSE }
+datas %>%
+  ggplot(aes(x=H2, fill = Anatomy, color = Anatomy)) +
+  geom_density(alpha = 0.3) +
+   theme(legend.position = "none") 
+```
+
+***
+  
+# Statistic 
+
+
+To describe H2 we use a model with :     
+
+- Main effect:     
+EZ     
+Spasm     
+C_Tubers     
+Toto_Tuber     
+Organisation     
+Age     
+Distance     
+Anatomy     
+Spike_rate      
+
+- Interaction   
+Anatomy*Spasm   
+
+
+We use a GLMM model with Gamma log description of the error distribution.   
+The random effect is simpler with only one intercept by patient to take into account variability across patients and non-independence of data within each patients.       
+
+Here the model's formula:    
+\begin{aligned}
+  \operatorname{H2}_{i}  &\sim N \left(\mu, \sigma^2 \right) \\
+    \mu &=\alpha + \beta_{1}(Age) + \beta_{1}(Organisation) + \beta_{1}(C\_Tubers) +  \\
+     &~~~~~~~~~~~~~ \beta_{1}(Toto\_Tubers) + \beta_{1}(\operatorname{Distance}) + \beta_{2}(\operatorname{Spike\_rate}) + \beta_{3}(\operatorname{EZ}) +  \\
+     &~~~~~~~~~~~~~\beta_{4}(\operatorname{Anatomy}) + \beta_{5}(\operatorname{Spasm}) + \beta_{5}(\operatorname{Anatomy}:\operatorname{Spasm}) \\
+    
+    \alpha  &\sim N \left(\beta{0} + \beta{S} \right) 
+\end{aligned}
+
+For Subject S = 1 : n   
+
+We fit 2 models with exactly the same factors but datas change:    
+- With the 6 levels of anatomy (interzone)   
+- With the grouping of anatomy in 3 levels (intrazone)   
+
+
+## INTRAZONE model
+
+3 Anatomy levels    
+
+NC-NC : NC   
+DC-DC : DC   
+DT-OT & OT-OT : TUBERS   
+
+
+### Model definition
+
+
+
+```{r, message=FALSE, warning=FALSE }
+
+datas %>%
+  filter(Anatomy == "NC-NC" | Anatomy == "DC-DC" | Anatomy == "OT-OT" | Anatomy == "DT-OT") %>%
+  mutate(Anatomy = case_when(Anatomy == "NC-NC" ~ "NC-NC",
+                             Anatomy == "DC-DC" ~ "DC-DC",
+                             Anatomy == "DT-OT" ~ "Tuber",
+                             Anatomy == "OT-OT" ~ "Tuber"),
+         Anatomy = as.factor(Anatomy)) %>%
+  data.frame() -> data.intra
+
+model.intra <- mixed(H2 ~ Organisation +
+                       scale(Distance) + 
+                       scale(Spike_rate) +
+                       scale(C_Tubers) + scale(Toto_Tubers) + scale(Age) + EZ +
+                       Anatomy*Spasm + 
+                  (1|Pat_name),
+                  data = data.intra,
+                  method = "LRT",
+                  family = Gamma(link = "log"),
+                  verbose = FALSE,
+                  control = glmerControl(optimizer="bobyqa"))
+
+
+```
+
+```{r, message=FALSE, warning=FALSE }
+library(equatiomatic) 
+equatiomatic::extract_eq(model.intra$full_model, wrap = 2)
+```
+$$
+\begin{aligned}
+  
+    \alpha_{j}  &\sim N \left(\gamma_{0}^{\alpha} + \gamma_{1}^{\alpha}(\operatorname{Organisation}_{\operatorname{1}}) + \gamma_{2}^{\alpha}(\operatorname{scale(C\_Tubers)}) + \gamma_{3}^{\alpha}(\operatorname{scale(Toto\_Tubers)}) + \gamma_{4}^{\alpha}(\operatorname{scale(Age)}) + \gamma_{5}^{\alpha}(\operatorname{Spasm}_{\operatorname{1}}) + \gamma_{6}^{\alpha}(\operatorname{Anatomy}_{\operatorname{1}} \times \operatorname{Spasm}_{\operatorname{1}}) + \gamma_{7}^{\alpha}(\operatorname{Anatomy}_{\operatorname{2}} \times \operatorname{Spasm}_{\operatorname{1}}), \sigma^2_{\alpha_{j}} \right)
+    \text{, for Pat\_name j = 1,} \dots \text{,J}
+\end{aligned}
+$$
+
+
+
+### Model check quality
+
+**R2**   
+
+The marginal 𝑅2 considers only the variance of the fixed effects (without the random effects).   
+While the conditional 𝑅2 takes both the fixed and random effects into account.   
+
+```{r, message=FALSE, warning=FALSE }
+library(performance)
+r2(model.intra$full_model) -> a
+```
+
+**Hosmer-Lemeshow Goodness-of-Fit Test**   
+Small p-values mean that the model is a poor fit.
+
+```{r, message=FALSE, warning=FALSE }
+performance_hosmer(model.intra$full_model)
+```
+
+**Overdispersion**
+
+```{r, message=FALSE, warning=FALSE }
+blmeco::dispersion_glmer(model.intra$full_model)
+```
+
+**Model performance**   
+adjusted ICC (intraclass-correlation coefficient): small is better  
+ICC : adjusted ICC (intraclass-correlation coefficient )    
+RMSE : root mean squared error    
+Sigma : residual standard deviation      
+
+```{r, message=FALSE, warning=FALSE }
+performance::model_performance(model.intra$full_model)
+```
+
+**Distributions** 
+
+```{r, message=FALSE, warning=FALSE }
+check_distribution(model.intra$full_model)
+```
+
+As we can see:   
+- residuals are normal   
+- response gamma is a good aproximation   
+
+**Model summary** 
+
+```{r, message=FALSE, warning=FALSE }
+jtools::summ(model.intra$full_model)
+```
+
+Here we find:    
+- SE for each fixed effect    
+- Random standard deviation (0.11). So ~25% of the residual. 
+
+
+### Analysis of variance
+
+```{r, message=FALSE, warning=FALSE }
+# summ.tab.a <- as.data.frame(anova(model.intra)) 
+# summ.tab.a <- mutate(summ.tab.a, effect = row.names(summ.tab.a))
+# 
+# summ.tab.b <- as.data.frame(anova(model.intra$full_model)) 
+# summ.tab.b <- mutate(summ.tab.b, effect = row.names(summ.tab.b))
+# 
+# left_join(summ.tab.b, summ.tab.a) %>%
+#   dplyr::select(effect, Chisq, `Chi Df`, `F value`, `Pr(>Chisq)`)
+# 
+# rm(summ.tab.a, summ.tab.b)
+
+anova(model.intra)
+```
+
+3 significant main effects:   
+- Distance    
+- Spike-rate    
+- Spasm   
+
+1 Interaction:   
+- Anatomy:Spasm    
+
+
+### Post-Hoc
+
+We explore all significant effects.    
+
+
+#### Anatomy:Spasm
+
+Display of raw and model's predicted values to better understand how the effects are expressed (qualitativly).     
+Predicted values (marginal effects) with confidence interval for specific model terms.   
+
+
+```{r, message=FALSE, warning=FALSE }
+
+data.intra %>%
+  ggplot(aes(x=Anatomy, y=H2, fill = Spasm)) +
+  geom_boxplot(alpha = 0.4) +
+	coord_cartesian(ylim=c(0.04, 0.20)) +
+  scale_fill_grey() + 
+  theme_classic() +
+  theme(legend.position = "right",
+        axis.title.x = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(face = "bold", size = 12, angle = 45, hjust = 1),
+        axis.text.y = element_text(face = "bold", size = 12, angle = 0, hjust = 1)) +
+  labs(x = "",
+       y = "H2") +
+  ggtitle("Raw datas")-> p1 
+
+
+plot_model(model.intra$full_model,
+           type = "pred",
+           colors = "gs",
+           terms = c("Anatomy", "Spasm")) +
+	coord_cartesian(ylim=c(0.04, 0.20)) +
+  theme_classic() +
+  theme(legend.position = "right",
+        axis.title.x = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(face = "bold", size = 12, angle = 45, hjust = 1),
+        axis.text.y = element_text(face = "bold", size = 12, angle = 0, hjust = 1)) +
+  labs(x = "",
+       y = "H2") +
+  ggtitle("Predicted Values") -> p2
+
+p1 + p2
+
+rm(p1, p2)
+
+
+```
+
+Here, the statistic values for all comparisons (quantitativly).   
+
+```{r, message=FALSE, warning=FALSE }
+
+emm.intra <- emmeans(model.intra, ~ Spasm | Anatomy, type = "response") 
+
+des_cont <- list("Spasm 0-1" = c(1, -1))
+
+contrast(emm.intra, des_cont, adjust = "FDR") %>%
+  data.frame()  %>%
+  mutate(`(FDR)` = round(p.value,4)) %>%
+  dplyr::select(-df, -z.ratio, -ratio, -SE, -p.value) -> cc.01
+
+contrast(emm.intra, des_cont, adjust = "none") %>%
+  data.frame() %>%
+  dplyr::select(-df, -z.ratio) %>%
+  mutate(p.value = round(p.value,4),
+         ratio = round(ratio,4),
+         SE = round(SE,4)) %>%
+  right_join(cc.01) %>%
+  mutate(`-` = case_when(`(FDR)` > 0.05 ~ ".",
+                        `(FDR)` < 0.05 ~ "*")) 
+
+rm(emm.intra, des_cont, cc.01)
+```
+
+There is a significant difference between Spasm levels within each Anatomy level except NC-NC.    
+
+
+#### Distance
+
+
+```{r, message=FALSE, warning=FALSE }
+data.intra %>%
+  ggplot(aes(x=Distance, y=H2)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm") +
+  ylim(0.04,0.13) +
+  ggtitle("Raw Datas") -> p1 
+
+
+plot_model(model.intra$full_model,
+           type = "pred",
+           terms = c("Distance")) +
+  ylim(0.04,0.13) +
+  ggtitle("Predicted Values") -> p2
+
+p1 + p2
+
+
+rm(p1, p2)
+
+```
+
+We see a negative effect of the distance on the H2.    
+
+
+#### Spike_rate
+
+
+```{r, message=FALSE, warning=FALSE }
+data.intra %>%
+  ggplot(aes(x=Spike_rate, y=H2)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm") +
+  ylim(0.04,0.13) +
+  ggtitle("Raw Datas") -> p1 
+
+plot_model(model.intra$full_model,
+           type = "pred",
+           terms = c("Spike_rate"))  +
+  ylim(0.04,0.13) +
+  ggtitle("Predicted Values") -> p2
+
+p1 + p2
+
+
+rm(p1, p2)
+
+```
+We see a positive effect of Spike-rate on the H2.    
+here we can see the gamma family effect with a curve effect (not a linear effect).   
+
+#### Spasm
+
+
+```{r, message=FALSE, warning=FALSE }
+data.intra %>%
+  ggplot(aes(x=Spasm, y=H2)) +
+  geom_boxplot(alpha = 0.4) +
+  theme(axis.text.x = element_text(angle = 90)) +
+	coord_cartesian(ylim=c(0.04, 0.20)) +
+  scale_fill_grey() + 
+  theme_classic() +
+  theme(legend.position = "right",
+        axis.title.x = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(face = "bold", size = 12, angle = 0),
+        axis.text.y = element_text(face = "bold", size = 12, angle = 0)) +
+  labs(x = "Spasm",
+       y = "H2") +
+  ggtitle("Raw Datas") -> p1 
+
+plot_model(model.intra$full_model,
+           type = "pred",
+           terms = c("Spasm")) +
+	coord_cartesian(ylim=c(0.04, 0.20)) +
+  scale_fill_grey() + 
+  theme_classic() +
+  theme(legend.position = "right",
+        axis.title.x = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(face = "bold", size = 12, angle = 0),
+        axis.text.y = element_text(face = "bold", size = 12, angle = 0)) +
+  labs(x = "Spasm",
+       y = "H2") +
+  ggtitle("Predicted Values") -> p2
+
+p1 + p2
+
+rm(p1, p2)
+
+
+
+```
+
+We see an H2 higher for the Spasm seizure.    
+
+***
+## INTERZONE model
+
+Heres we used 6 Anatomic levels.       
+
+DT-OT   
+DT-NC   
+DT-DC   
+OT-NC   
+OT-DC   
+NC-DC   
+
+
+### Model definition
+
+The same as previous analysis.   
+
+```{r, message=FALSE, warning=FALSE }
+data.inter <- filter(datas, Anatomy != "NC-NC" & Anatomy != "DC-DC" & Anatomy != "OT-OT")
+
+model.inter <- mixed(H2 ~ Organisation +
+                       scale(Distance) + scale(Spike_rate) +
+                       scale(C_Tubers) + scale(Toto_Tubers) + scale(Age) + EZ +
+                       Anatomy*Spasm  + 
+                  (1|Pat_name),
+                  data = data.inter,
+                  method = "LR",
+                  family = Gamma(link = "log"),
+                  verbose = FALSE)
+
+```
+
+
+
+### Model check quality
+
+**R2**   
+
+The marginal 𝑅2 considers only the variance of the fixed effects (without the random effects).   
+While the conditional 𝑅2 takes both the fixed and random effects into account.   
+
+```{r, message=FALSE, warning=FALSE }
+library(performance)
+r2(model.inter$full_model)
+```
+
+**Hosmer-Lemeshow Goodness-of-Fit Test**   
+Small p-values mean that the model is a poor fit.
+
+```{r, message=FALSE, warning=FALSE }
+performance_hosmer(model.inter$full_model)
+```
+**Overdispersion**
+
+```{r, message=FALSE, warning=FALSE }
+blmeco::dispersion_glmer(model.inter$full_model)
+```
+
+**Model performance**   
+adjusted ICC (intraclass-correlation coefficient): small is better  
+ICC : adjusted ICC (intraclass-correlation coefficient )    
+RMSE : root mean squared error    
+Sigma : residual standard deviation      
+
+```{r, message=FALSE, warning=FALSE }
+performance::model_performance(model.inter$full_model)
+```
+
+**Distributions** 
+
+```{r, message=FALSE, warning=FALSE }
+check_distribution(model.inter$full_model)
+```
+
+As we can see:   
+- residuals are normal   
+- response gamma is a good aproximation   
+
+**Model summary** 
+
+```{r, message=FALSE, warning=FALSE }
+jtools::summ(model.inter$full_model)
+```
+
+Here we find:    
+- SE for each fixed effect    
+- Random standard deviation (0.11). So ~25% of the residual. 
+
+### Analysis of variance
+
+
+```{r, message=FALSE, warning=FALSE }
+summ.tab.a <- as.data.frame(anova(model.inter)) 
+summ.tab.a <- mutate(summ.tab.a, effect = row.names(summ.tab.a))
+
+summ.tab.b <- as.data.frame(Anova(model.inter$full_model, type = "III")) 
+summ.tab.b <- mutate(summ.tab.b, effect = row.names(summ.tab.b))
+
+left_join(summ.tab.b, summ.tab.a) %>%
+  dplyr::select(effect, Chisq, `Df`, `Pr(>Chisq)`)
+
+rm(summ.tab.a, summ.tab.b)
+```
+
+```{r, message=FALSE, warning=FALSE }
+Anova(model.inter$full_model, type = "III")
+```
+
+3 significant main effects:   
+- Distance    
+- Spike-rate    
+- Anatomy   
+- Spasm   
+
+1 Interaction:   
+- Anatomy:Spasm    
+
+### Post-Hoc
+
+#### Anatomy:Spasm
+
+
+
+```{r, message=FALSE, warning=FALSE }
+
+data.inter %>%
+  ggplot(aes(x=Anatomy, y=H2, fill = Spasm)) +
+  geom_boxplot(alpha = 0.4) +
+	coord_cartesian(ylim=c(0.04, 0.20)) +
+  scale_fill_grey() + 
+  theme_classic() +
+  theme(legend.position = "right",
+        axis.title.x = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(face = "bold", size = 12, angle = 45, hjust = 1),
+        axis.text.y = element_text(face = "bold", size = 12, angle = 0, hjust = 1)) +
+  labs(x = "",
+       y = "H2") +
+  ggtitle("Raw datas")-> p1 
+
+
+plot_model(model.inter$full_model,
+           type = "pred",
+           colors = "gs",
+           terms = c("Anatomy", "Spasm")) +
+	coord_cartesian(ylim=c(0.04, 0.20)) +
+  theme_classic() +
+  theme(legend.position = "right",
+        axis.title.x = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(face = "bold", size = 12, angle = 45, hjust = 1),
+        axis.text.y = element_text(face = "bold", size = 12, angle = 0, hjust = 1)) +
+  labs(x = "",
+       y = "H2") +
+  ggtitle("Predicted Values") -> p2
+
+p1 + p2
+
+rm(p1, p2)
+
+
+```
+
+
+
+
+```{r, message=FALSE, warning=FALSE }
+emm.inter <- emmeans(model.inter, ~ Spasm | Anatomy, type = "response") 
+
+des_cont <- list("Spasm 0-1" = c(1, -1))
+
+contrast(emm.inter, des_cont, adjust = "FDR") %>%
+  data.frame()  %>%
+  mutate(`(FDR)` = round(p.value,4)) %>%
+  dplyr::select(-df, -z.ratio, -ratio, -SE, -p.value) -> cc.01
+
+contrast(emm.inter, des_cont, adjust = "none") %>%
+  data.frame() %>%
+  dplyr::select(-df, -z.ratio) %>%
+  mutate(p.value = round(p.value,4),
+         ratio = round(ratio,4),
+         SE = round(SE,4)) %>%
+  right_join(cc.01) %>%
+  mutate(`-` = case_when(`(FDR)` > 0.05 ~ ".",
+                        `(FDR)` < 0.05 ~ "*"))
+
+
+rm(emm.intra, des_cont, cc.01)
+```
+
+
+There is a significant difference between Spasm levels within each Anatomy level except for NC-DC and NC-OT.        
+
+
+
+#### Distance
+
+
+```{r, message=FALSE, warning=FALSE }
+data.inter %>%
+  ggplot(aes(x=Distance, y=H2)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm") +
+  ylim(0.04,0.13) +
+  ggtitle("Raw Datas") -> p1 
+
+
+plot_model(model.inter$full_model,
+           type = "pred",
+           terms = c("Distance")) +
+  ylim(0.04,0.13) +
+  ggtitle("Predicted Values") -> p2
+
+p1 + p2
+
+
+rm(p1, p2)
+
+```
+
+
+We see a negative effect of the distance on the H2.    
+
+#### Spike_rate
+
+
+```{r, message=FALSE, warning=FALSE }
+data.inter %>%
+  ggplot(aes(x=Spike_rate, y=H2)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm") +
+  ylim(0.04,0.13) +
+  ggtitle("Raw Datas") -> p1 
+
+plot_model(model.inter$full_model,
+           type = "pred",
+           terms = c("Spike_rate"))  +
+  ylim(0.04,0.13) +
+  ggtitle("Predicted Values") -> p2
+
+p1 + p2
+
+
+rm(p1, p2)
+
+```
+
+
+We see a positive effect of the Spike-rate on the H2.    
+
+#### Spasm
+
+
+```{r, message=FALSE, warning=FALSE }
+data.inter %>%
+  ggplot(aes(x=Spasm, y=H2)) +
+  geom_boxplot(alpha = 0.4) +
+  theme(axis.text.x = element_text(angle = 90)) +
+	coord_cartesian(ylim=c(0.04, 0.20)) +
+  scale_fill_grey() + 
+  theme_classic() +
+  theme(legend.position = "right",
+        axis.title.x = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(face = "bold", size = 12, angle = 0),
+        axis.text.y = element_text(face = "bold", size = 12, angle = 0)) +
+  labs(x = "Spasm",
+       y = "H2") +
+  ggtitle("Raw Datas") -> p1 
+
+plot_model(model.inter$full_model,
+           type = "pred",
+           terms = c("Spasm")) +
+	coord_cartesian(ylim=c(0.04, 0.20)) +
+  scale_fill_grey() + 
+  theme_classic() +
+  theme(legend.position = "right",
+        axis.title.x = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(face = "bold", size = 12, angle = 0),
+        axis.text.y = element_text(face = "bold", size = 12, angle = 0)) +
+  labs(x = "Spasm",
+       y = "H2") +
+  ggtitle("Predicted Values") -> p2
+
+p1 + p2
+
+rm(p1, p2)
+
+
+
+```
+
+
+We see an H2 higher for the Spasm seizure.     
+
+
+#### Anatomy
+
+```{r, message=FALSE, warning=FALSE }
+data.inter %>%
+  ggplot(aes(x=Anatomy, y=H2)) +
+  geom_boxplot(alpha = 0.4) +
+  theme(axis.text.x = element_text(angle = 90)) +
+	coord_cartesian(ylim=c(0.04, 0.20)) +
+  ggtitle("Raw Datas") -> p1 
+
+plot_model(model.inter$full_model,
+           type = "pred",
+           terms = c("Anatomy")) +
+	coord_cartesian(ylim=c(0.04, 0.20)) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  ggtitle("Predicted Values") -> p2
+
+p1 + p2
+
+
+rm(p1, p2)
+
+```
+
+
+
+
+```{r, message=FALSE, warning=FALSE }
+emm.inter <- emmeans(model.inter, ~ Anatomy, type = "response") 
+
+des_cont <- list("DC-OT VS DT-DC" = c(1, -1,  0,  0, 0, 0),
+                 "DC-OT VS DT-OT" = c(1,  0, -1,  0, 0, 0),
+                 "DC-OT VS NC-DC" = c(1,  0,  0, -1, 0, 0),
+                 "DC-OT VS NC-DT" = c(1,  0,  0, 0, -1, 0),
+                 "DC-OT VS NC-OT" = c(1,  0,  0, 0, 0, -1),
+                 "DT-DC VS DT-OT" = c(0,  1, -1, 0, 0, 0),
+                 "DT-DC VS NC-DC" = c(0,  1,  0, -1, 0, 0),
+                 "DT-DC VS NC-DT" = c(0,  1,  0, 0, -1, 0),
+                 "DT-DC VS NC-OT" = c(0,  1,  0, 0, 0, -1),
+                 "DT-OT VS NC-DC" = c(0,  0,  1, -1, 0, 0),
+                 "DT-OT VS NC-DT" = c(0,  0,  1, 0, -1, 0),
+                 "DT-OT VS NC-OT" = c(0,  0,  1, 0, 0, -1),
+                 "NC-DC VS NC-DT" = c(0,  0,  0, 1, -1, 0),
+                 "NC-DC VS NC-OT" = c(0,  0,  0, 1, 0, -1),
+                 "NC-DT VS NC-OT" = c(0,  0,  0, 0, 1, -1)
+                 )
+
+contrast(emm.inter, des_cont, adjust = "FDR") %>%
+  data.frame()  %>%
+  mutate(`(FDR)` = round(p.value,4)) %>%
+  dplyr::select(-df, -z.ratio, -ratio, -SE, -p.value) -> cc.01
+
+contrast(emm.inter, des_cont, adjust = "none") %>%
+  data.frame() %>%
+  dplyr::select(-df, -z.ratio) %>%
+  mutate(p.value = round(p.value,4),
+         ratio = round(ratio,4),
+         SE = round(SE,4)) %>%
+  right_join(cc.01) %>%
+  mutate(`-` = case_when(`(FDR)` > 0.05 ~ ".",
+                        `(FDR)` < 0.05 ~ "*"))
+```
+
+
+There are significant H2 difference between 4 anatomic levels:   
+- DC-OT VS DT-DC   
+- DC-OT VS NC-DC   
+- DT-DC VS DT-OT   
+- DT-DC VS NC-DT    
